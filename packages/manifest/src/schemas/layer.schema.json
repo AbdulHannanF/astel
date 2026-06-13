@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astel.dev/specs/schemas/layer.schema.json",
+  "title": "Astel Layer Entry",
+  "description": "One layer of the Astel Layer Stack (L0..L7, CLAUDE.md section 3). Common fields are shared; the 'kind' field fixes the layer's role and gates kind-specific blocks. Layers reference files by POSIX relative path and never inline splat geometry. See manifest-v0.md section 3.",
+  "type": "object",
+  "required": ["kind", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "description": "Fixed role of this layer. Each l0..l7 slot expects its canonical kind: l0=seed_pointcloud, l1=dense_pointcloud, l2=coarse_gaussians, l3=refined_gaussians, l4=appearance, l5=collision, l6=physics_material, l7=dynamics.",
+      "type": "string",
+      "enum": [
+        "seed_pointcloud",
+        "dense_pointcloud",
+        "coarse_gaussians",
+        "refined_gaussians",
+        "appearance",
+        "collision",
+        "physics_material",
+        "dynamics"
+      ]
+    },
+    "status": {
+      "description": "Lifecycle state, supporting the async preview/refine pipeline (CLAUDE.md section 1.6). 'present' means files are available; 'pending'/'failed'/'skipped' describe an incomplete pipeline.",
+      "type": "string",
+      "enum": ["present", "pending", "failed", "skipped"]
+    },
+    "files": {
+      "description": "Files backing this layer. Each entry is referenced by relative path with an integrity hash.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/fileRef" }
+    },
+    "count": {
+      "description": "Primitive count for this layer (points for clouds, gaussians for splat layers). Per-gaussian accessors bound to a splat layer must have matching count.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "derived_from": {
+      "description": "Layer ids this layer was computed from (provenance graph). E.g. L3 derived_from ['l1'], L5 derived_from ['l3'].",
+      "type": "array",
+      "items": { "type": "string", "enum": ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l7"] }
+    },
+    "metrics": {
+      "description": "Per-stage telemetry and layer-specific quality (CLAUDE.md section 10.3). Wall-time, VRAM peak, and dollar estimate are logged for every stage; regressions fail CI.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wall_seconds": { "type": "number", "minimum": 0, "description": "Stage wall-clock time in seconds." },
+        "vram_peak_mb": { "type": "number", "minimum": 0, "description": "Peak VRAM in MB during this stage." },
+        "usd_estimate": { "type": "number", "minimum": 0, "description": "Estimated compute cost in USD for this stage." },
+        "geometric": {
+          "description": "Geometric quality of this layer vs its reference (primarily for L3 vs L1). Mirrors quality_report.geometric_error.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "chamfer_mm": { "type": ["number", "null"], "description": "Symmetric Chamfer distance to reference layer, in mm." },
+            "mean_mm": { "type": ["number", "null"], "description": "Mean point-to-surface distance, in mm." },
+            "p95_mm": { "type": ["number", "null"], "description": "95th-percentile distance, in mm." },
+            "reference_layer": { "type": "string", "enum": ["l0", "l1"], "description": "Layer used as the geometric reference." }
+          }
+        }
+      }
+    },
+    "provenance_ref": {
+      "description": "Index into the manifest 'provenance.channels' array binding this layer's per-primitive measured-vs-generated confidence buffer. Required for layers that carry per-primitive provenance (L0-L3).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "kernel_type": {
+      "$ref": "#/$defs/kernelType",
+      "description": "Set on a splat layer that is homogeneous in kernel type. Mutually exclusive with kernel_batches."
+    },
+    "kernel_batches": {
+      "description": "Mixed-kernel batch table for a splat layer that contains more than one kernel type. Each batch covers a contiguous index range. Mutually exclusive with kernel_type. See manifest-v0.md section 7.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/kernelBatch" }
+    },
+    "budget": {
+      "description": "Splat budget for L3 (MCMC budget = product tier, DECISIONS.md arch decision 3).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier"],
+      "properties": {
+        "tier": { "type": "string", "enum": ["lowpoly", "standard", "cinematic"], "description": "Product budget tier." },
+        "target_count": { "type": "integer", "minimum": 1, "description": "Requested gaussian count." },
+        "actual_count": { "type": "integer", "minimum": 0, "description": "Achieved gaussian count." }
+      }
+    },
+    "appearance": {
+      "description": "L4-specific block: per-gaussian PBR channel accessors plus environment map. Channels are index-aligned to bound_to's gaussians. baked_pbr is a one-way-derived preview for plain-splat engines; baked-only is forbidden (CLAUDE.md section 3 L4).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bound_to": { "type": "string", "enum": ["l2", "l3"], "description": "Splat layer these materials index (per-gaussian arrays are parallel to it)." },
+        "albedo_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian albedo (VEC3)." },
+        "roughness_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian roughness (SCALAR)." },
+        "metallic_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian metallic (SCALAR)." },
+        "specular_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian specular (SCALAR)." },
+        "emissive_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian emissive (VEC3)." },
+        "env_map_path": { "type": "string", "description": "Relative path to estimated environment illumination (.hdr/.exr), separated from albedo." },
+        "baked_pbr_path": { "type": "string", "description": "Relative path to a baked-preview splat file derived from L4 for engines consuming only colored splats." }
+      }
+    },
+    "collision": {
+      "description": "L5-specific block: SDF, convex proxy set, print/physics-only isosurface, and mass properties. The isosurface is never a deliverable and exporters refuse to emit it except as .3mf/.stl (CLAUDE.md section 1.1, section 3 L5).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sdf_path": { "type": "string", "description": "Relative path to the sparse-voxel SDF (.npz: origin, voxel_size, dims, indices, values)." },
+        "convex_set_path": { "type": "string", "description": "Relative path to the convex decomposition proxy set (.glb). Collision data only; never a visible deliverable." },
+        "isosurface": {
+          "description": "Watertight surface for the print and physics-volume paths ONLY.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string", "description": "Relative path to the watertight surface (.ply)." },
+            "print_physics_only": { "type": "boolean", "const": true, "description": "Always true. Marks the isosurface as never-exportable as an asset; only emitted as .3mf/.stl print files." }
+          },
+          "required": ["path", "print_physics_only"]
+        },
+        "mass_props_path": { "type": "string", "description": "Relative path to mass_props.json (volume_m3, center_of_mass, inertia_tensor). Inertia requires L6 densities and is null until L6 is present." }
+      }
+    },
+    "physics_material": {
+      "description": "L6-specific block: semantic regions (material class, density, friction, restitution) and per-gaussian region map. Each region carries a confidence and a citation to the LLM/VLM reasoning trace (DECISIONS.md RA4).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "regions_path": { "type": "string", "description": "Relative path to regions.json (array of region descriptors)." },
+        "region_map_accessor": { "type": "integer", "minimum": 0, "description": "Accessor index for per-gaussian uint16 region id, index-aligned to L3." },
+        "articulation": {
+          "description": "Optional detected joints / separable parts hints.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["revolute", "prismatic", "fixed", "free"], "description": "Joint kind." },
+              "parent_region": { "type": "integer", "description": "Region id of the parent part." },
+              "child_region": { "type": "integer", "description": "Region id of the child part." },
+              "axis": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "Joint axis in native coordinates." }
+            }
+          }
+        }
+      }
+    },
+    "dynamics": {
+      "description": "L7-specific block: deformation representation and timeline for dynamic (video) captures (DECISIONS.md L7).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "representation": { "type": "string", "enum": ["deformation_field", "keyframes", "baked_per_frame"], "description": "How motion is encoded." },
+        "deformation_path": { "type": "string", "description": "Relative path to the deformation field / 4DGS keyframe deltas (.bin)." },
+        "timeline_path": { "type": "string", "description": "Relative path to timeline.json (fps, frame_count, duration_s, loop, keyframes)." }
+      }
+    },
+    "extras": {
+      "description": "Free-form layer data, ignored by validators."
+    }
+  },
+  "allOf": [
+    {
+      "description": "kernel_type and kernel_batches are mutually exclusive.",
+      "not": { "required": ["kernel_type", "kernel_batches"] }
+    }
+  ],
+  "$defs": {
+    "fileRef": {
+      "title": "File Reference",
+      "description": "A file inside the package referenced by relative path with an integrity hash.",
+      "type": "object",
+      "required": ["path", "role", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "POSIX relative path from package root. No absolute paths, no '..' traversal.",
+          "type": "string",
+          "pattern": "^(?!/)(?!.*\\.\\.).+$"
+        },
+        "role": {
+          "description": "Disambiguates multiple files of a layer. 'master' = full-precision archival; 'delivery' = compressed derived copy; 'provenance' = the per-primitive provenance buffer; others as needed.",
+          "type": "string",
+          "enum": ["master", "delivery", "provenance", "semantics", "env_map", "baked_preview", "sdf", "convex_set", "isosurface", "mass_props", "regions", "deformation", "timeline", "auxiliary"]
+        },
+        "format": {
+          "description": "Concrete file format.",
+          "type": "string",
+          "enum": ["ply", "spz", "sog", "splat", "ksplat", "glb", "gltf", "npz", "bin", "json", "hdr", "exr", "webp", "3mf", "stl"]
+        },
+        "derived": {
+          "description": "True if this file is a lossy derivative of a master in the same layer (e.g. a .spz delivery copy of the .ply master).",
+          "type": "boolean",
+          "default": false
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the file contents, for integrity verification.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "description": "File size in bytes.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "kernelType": {
+      "title": "Kernel Type",
+      "description": "Splat kernel type. Extensible: 'gaussian_3d' maps to KHR kernel:ellipse; 'gaussian_2d' is a surfel/disc (Astel L3 default per DECISIONS.md). Reserved/future and custom:* values must be preserved by readers even if unrenderable (manifest-v0.md section 7).",
+      "type": "string",
+      "anyOf": [
+        { "enum": ["gaussian_3d", "gaussian_2d", "gaussian_spindle", "gaussian_ray"] },
+        { "pattern": "^custom:[A-Za-z0-9_.-]+$" }
+      ]
+    },
+    "kernelBatch": {
+      "title": "Kernel Batch",
+      "description": "A contiguous range of splats within a layer that share a kernel type and attribute set.",
+      "type": "object",
+      "required": ["kernel_type", "first", "count"],
+      "additionalProperties": false,
+      "properties": {
+        "kernel_type": { "$ref": "#/$defs/kernelType", "description": "Kernel type for this batch." },
+        "first": { "type": "integer", "minimum": 0, "description": "Index of the first splat in this batch within the layer's ordered splat buffer." },
+        "count": { "type": "integer", "minimum": 1, "description": "Number of splats in this batch; covers indices [first, first+count)." },
+        "attributes": {
+          "description": "Names of per-splat fields this batch carries (e.g. surfels carry a 2-vector scale + normal; ellipsoids a 3-vector scale).",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

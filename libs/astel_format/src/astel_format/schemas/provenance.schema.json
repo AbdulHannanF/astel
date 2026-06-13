@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astel.dev/specs/schemas/provenance.schema.json",
+  "title": "Astel Provenance Channel Descriptor",
+  "description": "The provenance channel: one scalar per primitive, present from L0 to export, encoding how measured-vs-generated each primitive is. 1.0 = fully measured (real sensor data), 0.0 = fully generated (hallucinated by a prior with no direct observation); intermediate values are partially constrained. This is the substrate of the Truth Meter (CLAUDE.md section 8.4) and the section 10.4 no-silent-hallucination guarantee (DECISIONS.md binding architecture decision 1). Generative completion may only lower-bound provenance for regions it touches; it MUST NOT raise the provenance of a region with measured evidence. See manifest-v0.md section 5.",
+  "type": "object",
+  "required": ["semantic", "range", "convention", "precision", "channels"],
+  "additionalProperties": false,
+  "properties": {
+    "semantic": {
+      "description": "Identifier of the channel semantic. Fixed for v0.",
+      "type": "string",
+      "const": "measured_vs_generated"
+    },
+    "range": {
+      "description": "Value range after decoding. Fixed [0,1] for v0.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "const": [0.0, 1.0]
+    },
+    "convention": {
+      "description": "Human-readable statement of the direction of the scalar.",
+      "type": "string",
+      "const": "1=measured, 0=generated"
+    },
+    "precision": {
+      "description": "Storage precision of the encoded scalar. 'u8' = UNORM8 (1 byte, q=round(p*255), p=q/255), the default 256-level confidence; 'u16' = UNORM16 (q=round(p*65535), p=q/65535) for cases where the hallucination heatmap drives print/physics safety decisions.",
+      "type": "string",
+      "enum": ["u8", "u16"]
+    },
+    "channels": {
+      "description": "One descriptor per layer that carries a provenance buffer (typically L0-L3). Each binds a layer to an accessor in the manifest buffer table. The accessor is SCALAR, UNORM8 or UNORM16 per 'precision', tightly packed, count = the layer's primitive count, index-aligned to that layer.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["layer", "accessor", "count"],
+        "additionalProperties": false,
+        "properties": {
+          "layer": {
+            "description": "Layer id this provenance buffer is bound to.",
+            "type": "string",
+            "enum": ["l0", "l1", "l2", "l3"]
+          },
+          "accessor": {
+            "description": "Index into the manifest buffer table's accessors array holding the per-primitive provenance scalar.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "count": {
+            "description": "Number of primitives, equal to the bound layer's count.",
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "export_carriers": {
+      "description": "How provenance survives export to formats that do not natively define it. Index alignment to the exported splat order is mandatory; any splat reordering on export (e.g. SPZ Morton sort) MUST apply the same permutation to the provenance accessor.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gltf_attribute": {
+          "description": "Custom glTF vertex attribute carrying provenance on the splat primitive. Underscore-prefixed per glTF custom-attribute convention.",
+          "type": "string",
+          "const": "_ASTEL_PROVENANCE"
+        },
+        "usd_primvar": {
+          "description": "USD primvar carrying provenance (float[], interpolation=vertex).",
+          "type": "string",
+          "const": "primvars:astel:provenance"
+        },
+        "spz_sidecar": {
+          "description": "True if provenance ships in the *.astl.json sidecar for bare .spz/.sog exports (the splat file itself stays standard).",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

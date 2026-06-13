@@ -1,0 +1,178 @@
+/* Astel design tokens — dark instrument studio.
+ *
+ * Palette in OKLCH. Brand hue ~62deg (brass / instrument), NOT blue/purple.
+ * Neutrals tinted toward brass (chroma ~0.006-0.012). Depth via surface
+ * lightness, not shadow. A cool teal (~195deg) is reserved exclusively for the
+ * "measured / confident" signal (Truth Meter + confidence channel) so honesty
+ * reads as a distinct, trustworthy colour vs. the brass "active / generated".
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* --- Brand: brass --- */
+  --brass-700: oklch(58% 0.1 64);
+  --brass-500: oklch(72% 0.13 66);
+  --brass-400: oklch(80% 0.13 70);
+  --brass-300: oklch(87% 0.09 74);
+
+  /* --- Measured signal: teal (reserved) --- */
+  --teal-500: oklch(72% 0.11 195);
+  --teal-400: oklch(80% 0.1 196);
+  --teal-300: oklch(87% 0.07 198);
+
+  /* --- Semantic --- */
+  --danger: oklch(64% 0.17 25);
+  --danger-soft: oklch(40% 0.09 25);
+  --warn: oklch(76% 0.13 78);
+
+  /* --- Neutrals (brass-tinted, never pure black/white) --- */
+  --ink-0: oklch(12% 0.008 70);   /* deepest bg */
+  --ink-1: oklch(15% 0.008 70);   /* app bg */
+  --ink-2: oklch(18% 0.009 71);   /* panel */
+  --ink-3: oklch(22% 0.01 72);    /* raised */
+  --ink-4: oklch(27% 0.011 73);   /* hover / border-strong */
+  --line: oklch(30% 0.012 72);    /* hairline borders */
+  --line-soft: oklch(24% 0.01 72);
+
+  --text-hi: oklch(94% 0.012 78);    /* primary text */
+  --text-mid: oklch(78% 0.012 76);   /* secondary */
+  --text-lo: oklch(62% 0.012 74);    /* tertiary / metadata */
+  --text-faint: oklch(50% 0.012 72); /* disabled / hint */
+
+  /* Semantic colour roles */
+  --accent: var(--brass-500);
+  --accent-bright: var(--brass-400);
+  --measured: var(--teal-400);
+  --focus: var(--brass-400);
+
+  /* --- Type --- */
+  --font-display: "Archivo", "Archivo Fallback", system-ui, sans-serif;
+  --font-ui: "Spline Sans", "Spline Sans Fallback", system-ui, sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Fixed rem scale, 1.25 ratio (product UI, not marketing) */
+  --text-xs: 0.6875rem;   /* 11px — instrument labels */
+  --text-sm: 0.8125rem;   /* 13px — secondary UI */
+  --text-base: 0.9375rem; /* 15px — body */
+  --text-lg: 1.1875rem;   /* 19px — subheads */
+  --text-xl: 1.5rem;      /* 24px */
+  --text-2xl: 2rem;       /* 32px — display */
+
+  /* --- 4pt spacing scale --- */
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  /* --- Radii --- */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* --- Elevation (dark: subtle, mostly for floating chrome) --- */
+  --shadow-md: 0 8px 24px -12px oklch(0% 0 0 / 0.55);
+  --shadow-lg: 0 24px 64px -24px oklch(0% 0 0 / 0.7);
+
+  /* --- Motion --- */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 130ms;
+  --dur-mid: 240ms;
+  --dur-slow: 420ms;
+
+  /* z-index ladder */
+  --z-rail: 5;
+  --z-overlay: 40;
+  --z-toast: 60;
+}
+
+@font-face {
+  font-family: "Archivo Fallback";
+  src: local("Segoe UI"), local("Helvetica Neue"), local("Arial");
+  size-adjust: 96%;
+  ascent-override: 92%;
+}
+@font-face {
+  font-family: "Spline Sans Fallback";
+  src: local("Segoe UI"), local("Helvetica Neue"), local("Arial");
+  size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--text-mid);
+  background: var(--ink-1);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  color: var(--text-hi);
+  line-height: 1.15;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ink-4);
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "astel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Astel — layered Gaussian-splat generation platform (monorepo root).",
+  "packageManager": "pnpm@11.6.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -C apps/web dev",
+    "dev:all": "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "up": "powershell -ExecutionPolicy Bypass -File scripts/up.ps1",
+    "build": "pnpm -C apps/web build",
+    "test": "pnpm -C apps/web test",
+    "lint": "pnpm -C apps/web lint",
+    "preview": "pnpm -C apps/web preview"
+  }
+}

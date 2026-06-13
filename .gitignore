@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+.cache/
+*.tsbuildinfo
+
+# SQLite dev/test databases
+*.db
+*.db-journal
+
+# Local artifact store (generated splat/quality-report outputs)
+.astel-artifacts/
+
+# Environments & secrets
+.env
+.env.*
+!.env.example
+
+# Data & artifacts (large binaries never in git)
+data/
+artifacts/
+checkpoints/
+*.ply
+*.spz
+*.sog
+*.splat
+*.ckpt
+*.safetensors
+*.pth
+
+# Checked-in demo assets (exceptions to the binary ban)
+!apps/web/public/samples/*.ply
+!apps/web/public/samples/*.spz
+
+# Spike-local binaries & runtime junk
+experiments/**/bin/
+logs/
+
+# Temporal dev-server data dir (created by `astel up -Temporal`)
+.astel-temporal/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/
+node_modules/
+

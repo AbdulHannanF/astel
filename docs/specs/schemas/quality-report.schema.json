@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astel.dev/specs/schemas/quality-report.schema.json",
+  "title": "Astel Quality Report",
+  "description": "The Truth Meter substrate (CLAUDE.md section 8.4). Used both inline in the manifest (summary) and as quality/report.json (full). Honesty contract: every numeric field is either a real measurement or explicit null WITH a reason. There is no '0 means we did not check.' Regressions in these metrics fail CI (CLAUDE.md section 10.3). See manifest-v0.md section 6.",
+  "type": "object",
+  "required": ["geometric_error", "scale_confidence", "hallucination"],
+  "additionalProperties": false,
+  "properties": {
+    "geometric_error": {
+      "description": "L3-vs-L1 surface fidelity. Null fields require a 'reason' (e.g. pure text-to-3D has no measured reference).",
+      "type": "object",
+      "required": ["units", "reference_layer"],
+      "additionalProperties": false,
+      "properties": {
+        "chamfer_mm": { "type": ["number", "null"], "minimum": 0, "description": "Symmetric Chamfer distance L3 vs reference, in mm. Null if no measured reference." },
+        "mean_mm": { "type": ["number", "null"], "minimum": 0, "description": "Mean point-to-surface distance, in mm." },
+        "p95_mm": { "type": ["number", "null"], "minimum": 0, "description": "95th-percentile distance, in mm." },
+        "method": { "type": "string", "description": "Algorithm used to compute the distance (e.g. 'bidirectional_nn')." },
+        "reference_layer": { "type": "string", "enum": ["l0", "l1"], "description": "Layer used as geometric ground truth." },
+        "units": { "type": "string", "const": "mm", "description": "Distance units; fixed to mm for v0." },
+        "reason": { "type": "string", "description": "Required when any distance field is null; explains why no measurement exists." }
+      }
+    },
+    "scale_confidence": {
+      "description": "Honest confidence interval on metric scale, mirroring manifest.scale. The interval may be wide; it is never hidden.",
+      "type": "object",
+      "required": ["meters_per_unit", "ci_low", "ci_high"],
+      "additionalProperties": false,
+      "properties": {
+        "meters_per_unit": { "type": "number", "exclusiveMinimum": 0, "description": "Best-estimate metres per native unit." },
+        "ci_low": { "type": "number", "exclusiveMinimum": 0, "description": "Lower bound of the confidence interval." },
+        "ci_high": { "type": "number", "exclusiveMinimum": 0, "description": "Upper bound of the confidence interval." },
+        "ci_method": { "type": "string", "description": "How the interval was derived (e.g. 'consensus_spread')." },
+        "sources": {
+          "description": "Methods contributing to the scale estimate.",
+          "type": "array",
+          "items": { "type": "string", "enum": ["sfm_exif", "metric_depth_consensus", "vlm_size_estimate", "user"] }
+        }
+      }
+    },
+    "hallucination": {
+      "description": "Measured-vs-generated breakdown. The hallucination heatmap IS the provenance channel rendered as a colour ramp; heatmap_ref points at the provenance accessor (no separate data). Fractions sum to <= 1.0; the remainder is unknown_fraction.",
+      "type": "object",
+      "required": ["measured_fraction", "generated_fraction"],
+      "additionalProperties": false,
+      "properties": {
+        "heatmap_ref": {
+          "description": "Reference to the provenance accessor visualized as the heatmap. Either an accessor index or a relative path to a precomputed colour buffer.",
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "description": "Accessor index in the buffer table." },
+            { "type": "string", "description": "Relative path to a precomputed heatmap buffer." }
+          ]
+        },
+        "measured_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of primitives with provenance >= a 'measured' threshold." },
+        "generated_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of primitives with provenance <= a 'generated' threshold." },
+        "unknown_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction whose provenance could not be determined. Distinct from generated." }
+      }
+    },
+    "view_metrics": {
+      "description": "Held-out-view photometric quality (CLAUDE.md section 10.3). Null for generative-only assets with no held-out views.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "psnr": { "type": ["number", "null"], "description": "Peak signal-to-noise ratio on held-out views, dB." },
+        "ssim": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Structural similarity on held-out views." },
+        "lpips": { "type": ["number", "null"], "minimum": 0, "description": "Learned perceptual image patch similarity (lower is better)." },
+        "n_holdout_views": { "type": ["integer", "null"], "minimum": 0, "description": "Number of held-out views used." }
+      }
+    },
+    "stage_telemetry": {
+      "description": "Roll-up of per-layer telemetry (sum across stages).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_wall_seconds": { "type": "number", "minimum": 0, "description": "Total pipeline wall-clock time." },
+        "peak_vram_mb": { "type": "number", "minimum": 0, "description": "Peak VRAM across all stages." },
+        "total_usd_estimate": { "type": "number", "minimum": 0, "description": "Total estimated compute cost in USD." }
+      }
+    },
+    "caveats": {
+      "description": "Free-text honesty notes surfaced in the UI (e.g. 'back face unseen; completed by prior').",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

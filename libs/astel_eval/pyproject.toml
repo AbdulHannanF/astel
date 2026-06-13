@@ -1,0 +1,48 @@
+[project]
+name = "astel-eval"
+version = "0.1.0"
+description = "Astel blind-eval harness: corpus loader, adapters, runner, and Bradley-Terry scoring scaffold."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.scripts]
+astel-eval = "astel_eval.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/astel_eval"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/astel_eval/corpus_v1.json" = "astel_eval/corpus_v1.json"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["numpy.*"]
+ignore_missing_imports = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

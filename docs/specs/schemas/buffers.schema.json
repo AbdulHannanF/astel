@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astel.dev/specs/schemas/buffers.schema.json",
+  "title": "Astel Buffer Table",
+  "description": "Binary buffer table for per-primitive channels (provenance, materials, region ids, deformation). Deliberately glTF-shaped (buffers -> bufferViews -> accessors) so the glTF exporter is a near-identity transform. All buffers are little-endian; bufferViews are 4-byte aligned. See manifest-v0.md section 4.",
+  "type": "object",
+  "required": ["buffers", "buffer_views", "accessors"],
+  "additionalProperties": false,
+  "properties": {
+    "buffers": {
+      "description": "Binary blobs referenced by relative path.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["uri", "byte_length"],
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "description": "POSIX relative path to a .bin file inside the package. No absolute paths, no '..' traversal.",
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\.\\.).+$"
+          },
+          "byte_length": { "type": "integer", "minimum": 1, "description": "Total length of the buffer in bytes." }
+        }
+      }
+    },
+    "buffer_views": {
+      "description": "Windows into buffers.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["buffer", "byte_offset", "byte_length"],
+        "additionalProperties": false,
+        "properties": {
+          "buffer": { "type": "integer", "minimum": 0, "description": "Index into the buffers array." },
+          "byte_offset": { "type": "integer", "minimum": 0, "description": "Offset into the buffer in bytes. Must keep the view 4-byte aligned." },
+          "byte_length": { "type": "integer", "minimum": 1, "description": "Length of the view in bytes." },
+          "byte_stride": { "type": "integer", "minimum": 1, "maximum": 252, "description": "Stride in bytes for interleaved data; omit for tightly packed." }
+        }
+      }
+    },
+    "accessors": {
+      "description": "Typed views over bufferViews. Per-gaussian accessors must have count equal to the bound splat layer's gaussian count and are index-aligned to it (the i-th element corresponds to the i-th gaussian).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/accessor" }
+    }
+  },
+  "$defs": {
+    "accessor": {
+      "title": "Accessor",
+      "description": "A typed array view. component_type uses glTF GL enums extended with UNORM aliases for clarity.",
+      "type": "object",
+      "required": ["buffer_view", "component_type", "type", "count"],
+      "additionalProperties": false,
+      "properties": {
+        "buffer_view": { "type": "integer", "minimum": 0, "description": "Index into the buffer_views array." },
+        "component_type": {
+          "description": "Component type. GL enums: 5120=BYTE, 5121=UNSIGNED_BYTE, 5122=SHORT, 5123=UNSIGNED_SHORT, 5125=UNSIGNED_INT, 5126=FLOAT. String aliases UNORM8/UNORM16 denote normalized unsigned integer storage (decoded to [0,1]).",
+          "oneOf": [
+            { "type": "integer", "enum": [5120, 5121, 5122, 5123, 5125, 5126] },
+            { "type": "string", "enum": ["UNORM8", "UNORM16"] }
+          ]
+        },
+        "type": {
+          "description": "Element shape.",
+          "type": "string",
+          "enum": ["SCALAR", "VEC2", "VEC3", "VEC4", "MAT3", "MAT4"]
+        },
+        "count": { "type": "integer", "minimum": 1, "description": "Number of elements. For per-gaussian channels, equals the bound layer's gaussian count." },
+        "normalized": {
+          "description": "If true, integer values are normalized to [0,1] (unsigned) or [-1,1] (signed) on read. Implied true for UNORM8/UNORM16 aliases.",
+          "type": "boolean",
+          "default": false
+        },
+        "quantization": {
+          "description": "Optional dequantization parameters when a coarse integer type encodes a wider range than plain normalization.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "scale": { "type": "number", "description": "Multiplier applied after reading the stored integer." },
+            "offset": { "type": "number", "description": "Value added after scaling." }
+          }
+        }
+      }
+    }
+  }
+}

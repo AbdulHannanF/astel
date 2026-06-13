@@ -1,0 +1,59 @@
+[project]
+name = "astel-api"
+version = "0.1.0"
+description = "Astel API gateway — FastAPI task orchestrator (M1 skeleton)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.12",
+    "temporalio>=1.28.0",
+    "astel-splat-io",
+    "astel-format",
+    "alembic>=1.18.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["astel_splat_io.*", "astel_format.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+astel-splat-io = { path = "../../libs/astel_splat_io", editable = true }
+astel-format = { path = "../../libs/astel_format", editable = true }

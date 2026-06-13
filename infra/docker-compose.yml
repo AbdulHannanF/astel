@@ -1,0 +1,72 @@
+# Astel — prod-shaped local stack. NOT used by the M1 dev loop (the dev box has
+# no Docker; the API runs on SQLite in-process and the task engine is the
+# in-process stub). This compose file documents the production topology and is
+# the target for `astel up` once the Temporal engine and real storage land.
+#
+# Bring up with:  docker compose -f infra/docker-compose.yml up -d
+name: astel
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: astel
+      POSTGRES_PASSWORD: astel
+      POSTGRES_DB: astel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible object storage for layer artifacts (.ply/.spz/.sog, SDF buffers).
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: astel
+      MINIO_ROOT_PASSWORD: astel-dev-secret
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Temporal (task engine — finalized in docs/research/10-task-engine-spike.md).
+  # Prod runs Temporal on the shared Postgres above; dev uses the bundled
+  # `temporal server start-dev` binary instead of this service.
+  temporal:
+    image: temporalio/auto-setup:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: astel
+      POSTGRES_PWD: astel
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"   # gRPC frontend (workers connect here)
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - "8233:8080"   # workflow inspection UI
+
+volumes:
+  pgdata:
+  miniodata:

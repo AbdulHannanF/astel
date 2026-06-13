@@ -1,0 +1,259 @@
+/* Generation dock — the command surface. Modality tabs, prompt/drop input,
+ * and the live L0->L3 progress rail driven by real SSE events.
+ */
+
+.dock__inner {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Modality tabs */
+.modes {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--ink-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-lo);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition:
+    color var(--dur-fast),
+    background var(--dur-fast);
+}
+.mode:hover {
+  color: var(--text-hi);
+}
+.mode--active {
+  color: var(--text-hi);
+  background: var(--ink-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.mode svg {
+  opacity: 0.8;
+}
+
+/* Prompt / drop field */
+.prompt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 44px;
+  padding: 0 var(--space-sm) 0 var(--space-md);
+  background: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition:
+    border-color var(--dur-fast),
+    background var(--dur-fast);
+}
+.prompt:focus-within {
+  border-color: var(--accent);
+}
+.prompt--drag {
+  border-color: var(--accent-bright);
+  border-style: dashed;
+  background: oklch(20% 0.02 68);
+}
+.prompt input {
+  flex: 1;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-hi);
+  font: inherit;
+  outline: none;
+}
+.prompt input::placeholder {
+  color: var(--text-faint);
+}
+.prompt__hint {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.prompt__file {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--accent-bright);
+  white-space: nowrap;
+}
+.prompt__file--error {
+  color: var(--danger, #e5484d);
+}
+.prompt__file-status {
+  color: var(--text-faint);
+}
+
+/* Submit */
+.generate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 44px;
+  padding: 0 var(--space-lg);
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--ink-0);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  transition:
+    background var(--dur-fast),
+    transform var(--dur-fast) var(--ease-out-quart),
+    opacity var(--dur-fast);
+}
+.generate:hover:not(:disabled) {
+  background: var(--accent-bright);
+}
+.generate:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.generate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Progress rail */
+.rail-progress {
+  grid-column: 1 / -1;
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--line-soft);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-lg);
+  animation: rail-in var(--dur-slow) var(--ease-out-expo);
+}
+@keyframes rail-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.stages {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: var(--space-md);
+}
+.stage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stage-cell__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+.stage-cell__id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.stage-cell--done .stage-cell__id,
+.stage-cell--active .stage-cell__id {
+  color: var(--accent);
+}
+.stage-cell__label {
+  font-size: var(--text-xs);
+  color: var(--text-lo);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stage-cell--active .stage-cell__label {
+  color: var(--text-hi);
+}
+.stage-cell__track {
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--ink-3);
+  overflow: hidden;
+}
+.stage-cell__fill {
+  height: 100%;
+  width: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width var(--dur-mid) linear;
+}
+.stage-cell--active .stage-cell__fill {
+  background: var(--accent-bright);
+  box-shadow: 0 0 8px -1px var(--accent-bright);
+}
+.stage-cell--done .stage-cell__fill {
+  width: 100% !important;
+}
+
+.rail-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  white-space: nowrap;
+}
+.rail-status__pct {
+  color: var(--text-hi);
+  font-size: var(--text-sm);
+  min-width: 4ch;
+  text-align: right;
+}
+.rail-status__metric {
+  color: var(--text-lo);
+}
+.rail-status--done {
+  color: var(--measured);
+}
+.rail-status--error {
+  color: var(--danger);
+}
+.rail-cancel {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-lo);
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+.rail-cancel:hover {
+  color: var(--text-hi);
+  border-color: var(--ink-4);
+}
+
+@media (max-width: 1100px) {
+  .dock__inner {
+    grid-template-columns: 1fr auto;
+  }
+  .modes {
+    grid-column: 1 / -1;
+  }
+  .stages {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+  }
+}

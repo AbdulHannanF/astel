@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astel.dev/specs/schemas/manifest.schema.json",
+  "title": "Astel Package Manifest",
+  "description": "Root contract for an .astel package manifest.json (v0). An .astel file is a ZIP archive containing this manifest plus the referenced layer/quality/export files. The manifest references files by POSIX relative path from the package root; it never inlines splat geometry. See docs/specs/manifest-v0.md.",
+  "type": "object",
+  "required": [
+    "format_version",
+    "astel",
+    "coordinate_system",
+    "scale",
+    "layers",
+    "buffers",
+    "provenance",
+    "quality_report"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "format_version": {
+      "description": "SemVer string of the Astel package spec this manifest conforms to. MAJOR bump = breaking; MINOR = additive; PATCH = clarification. Readers must refuse an unknown MAJOR and must open any MINOR within a known MAJOR, ignoring unknown additive keys. See manifest-v0.md section 10.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "examples": ["0.1.0"]
+    },
+    "astel": {
+      "$ref": "#/$defs/assetIdentity"
+    },
+    "coordinate_system": {
+      "$ref": "#/$defs/coordinateSystem"
+    },
+    "scale": {
+      "$ref": "#/$defs/scale"
+    },
+    "layers": {
+      "description": "Ordered map of present layers l0..l7 of the Layer Stack (CLAUDE.md section 3). Absent layers are omitted entirely. Each value is a Layer Entry. The order l0->l7 is the pipeline order; layers never collapse into a single blob (binding constraint).",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "l0": { "$ref": "layer.schema.json", "description": "L0 seed / sparse point cloud." },
+        "l1": { "$ref": "layer.schema.json", "description": "L1 dense point cloud (geometric ground truth for L3 error)." },
+        "l2": { "$ref": "layer.schema.json", "description": "L2 coarse feed-forward gaussians." },
+        "l3": { "$ref": "layer.schema.json", "description": "L3 refined surface gaussians (the hero layer)." },
+        "l4": { "$ref": "layer.schema.json", "description": "L4 appearance / lighting (per-gaussian PBR + env map)." },
+        "l5": { "$ref": "layer.schema.json", "description": "L5 collision & solidity (SDF, convex set, print-only isosurface, mass props)." },
+        "l6": { "$ref": "layer.schema.json", "description": "L6 physics-material & semantic regions." },
+        "l7": { "$ref": "layer.schema.json", "description": "L7 dynamics (video inputs, optional)." }
+      }
+    },
+    "buffers": {
+      "$ref": "buffers.schema.json"
+    },
+    "provenance": {
+      "$ref": "provenance.schema.json"
+    },
+    "quality_report": {
+      "$ref": "quality-report.schema.json"
+    },
+    "exports": {
+      "description": "Records of exports generated from this package, each documenting the lossy projection applied (which layers were dropped, coordinate transform, kernel conversion). The package is the lossless source of truth; exports are honest about what they lose. See manifest-v0.md section 11.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/exportRecord" }
+    },
+    "extensions": {
+      "description": "Namespaced vendor extension blocks. Keys are namespaced (astel_*, vendor_*). Unknown extension blocks MUST be preserved on round-trip (forward-migration policy, section 10).",
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    },
+    "extras": {
+      "description": "Free-form application data, ignored by validators (glTF convention)."
+    }
+  },
+  "$defs": {
+    "assetIdentity": {
+      "title": "Asset Identity",
+      "description": "Identity and provenance of the asset as a whole.",
+      "type": "object",
+      "required": ["id", "created", "generator", "source_modality"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Stable unique id for the asset. UUIDv7 recommended (time-ordered).",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created": {
+          "description": "ISO-8601 UTC timestamp of package creation.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "generator": {
+          "description": "Producing tool name and version, for auditable migrations.",
+          "type": "object",
+          "required": ["name", "version"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "description": "Generator name, e.g. 'astel-pipeline'." },
+            "version": { "type": "string", "description": "Generator version string." }
+          }
+        },
+        "source_modality": {
+          "description": "Input modality that produced this asset (CLAUDE.md section 0).",
+          "type": "string",
+          "enum": ["text", "image", "multi_image", "video"]
+        },
+        "name": {
+          "description": "Human-readable asset name.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Original text prompt, if source_modality is text.",
+          "type": "string"
+        },
+        "seed": {
+          "description": "Generation seed for reproducibility, if applicable.",
+          "type": "integer"
+        }
+      }
+    },
+    "coordinateSystem": {
+      "title": "Coordinate System",
+      "description": "The single basis every layer and buffer lives in. Astel-native is right-handed, +Y up, -Z forward (glTF/OpenGL convention) so glTF export is identity. SH band-ge-1 coefficients must be rotated/resigned on any basis change at export (manifest-v0.md section 8).",
+      "type": "object",
+      "required": ["handedness", "up_axis", "forward_axis", "meters_per_unit"],
+      "additionalProperties": false,
+      "properties": {
+        "handedness": {
+          "description": "Chirality of the coordinate frame.",
+          "type": "string",
+          "enum": ["right", "left"]
+        },
+        "up_axis": {
+          "description": "Signed axis that points up.",
+          "type": "string",
+          "enum": ["+X", "+Y", "+Z", "-X", "-Y", "-Z"]
+        },
+        "forward_axis": {
+          "description": "Signed axis that points forward (away from a default camera).",
+          "type": "string",
+          "enum": ["+X", "+Y", "+Z", "-X", "-Y", "-Z"]
+        },
+        "meters_per_unit": {
+          "description": "Metres represented by one native unit. Default 1.0. Mirrors scale.meters_per_unit; the scale block carries the confidence interval.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 1.0
+        }
+      }
+    },
+    "scale": {
+      "title": "Metric Scale",
+      "description": "Metric grounding of the asset, with an honest confidence interval that may be wide (CLAUDE.md section 3 L1, section 4). Never a bare point claim.",
+      "type": "object",
+      "required": ["meters_per_unit", "confidence", "method"],
+      "additionalProperties": false,
+      "properties": {
+        "meters_per_unit": {
+          "description": "Best-estimate metres per native unit.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "confidence": {
+          "description": "Confidence interval on the scale estimate. Width communicates honesty; a wide interval is legal and expected for pure text/image inputs.",
+          "type": "object",
+          "required": ["ci_low", "ci_high"],
+          "additionalProperties": false,
+          "properties": {
+            "ci_low": { "type": "number", "exclusiveMinimum": 0, "description": "Lower bound of meters_per_unit confidence interval." },
+            "ci_high": { "type": "number", "exclusiveMinimum": 0, "description": "Upper bound of meters_per_unit confidence interval." },
+            "distribution": {
+              "description": "Assumed distribution shape of the estimate.",
+              "type": "string",
+              "enum": ["lognormal", "normal", "uniform", "unknown"],
+              "default": "unknown"
+            }
+          }
+        },
+        "method": {
+          "description": "Primary method that produced the scale estimate (DECISIONS.md RA3 consensus).",
+          "type": "string",
+          "enum": ["sfm_exif", "metric_depth_consensus", "vlm_size_estimate", "user"]
+        },
+        "sources": {
+          "description": "Individual estimates feeding the consensus, each weighted. Retains the original even after a user override.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "meters_per_unit"],
+            "additionalProperties": false,
+            "properties": {
+              "method": { "type": "string", "enum": ["sfm_exif", "metric_depth_consensus", "vlm_size_estimate", "user"], "description": "Method of this individual source." },
+              "meters_per_unit": { "type": "number", "exclusiveMinimum": 0, "description": "This source's scale estimate." },
+              "weight": { "type": "number", "minimum": 0, "description": "Relative weight in the consensus." }
+            }
+          }
+        },
+        "user_overridden": {
+          "description": "True if the user manually set the scale (CLAUDE.md section 3 L1). The original estimate is retained in sources.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "exportRecord": {
+      "title": "Export Record",
+      "description": "One lossy projection of the Layer Stack onto an open standard. Documents exactly what was dropped so the round-trip story stays honest (manifest-v0.md section 11).",
+      "type": "object",
+      "required": ["target", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "description": "Export target format.",
+          "type": "string",
+          "enum": ["gltf", "gltf_spz", "usd", "usdz", "spz_sidecar", "sog_sidecar", "ply", "3mf", "stl"]
+        },
+        "path": {
+          "description": "POSIX relative path to the primary exported file inside the package (or external if generated lazily).",
+          "type": "string"
+        },
+        "sidecar_path": {
+          "description": "Relative path to the companion Astel sidecar (*.astl.json) for bare .spz/.sog exports, carrying provenance and the manifest subset.",
+          "type": "string"
+        },
+        "source_layer": {
+          "description": "Layer id whose splats were exported (e.g. 'l3' or 'l2' for previews).",
+          "type": "string",
+          "enum": ["l2", "l3"]
+        },
+        "dropped_layers": {
+          "description": "Layer ids present in the package but not representable in this export. The .astel package retains them.",
+          "type": "array",
+          "items": { "type": "string", "enum": ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l7"] }
+        },
+        "kernel_conversion": {
+          "description": "Kernel-type conversion applied (e.g. 2DGS surfels flattened to ellipsoids for KHR_gaussian_splatting which only defines kernel:ellipse).",
+          "type": "string"
+        },
+        "coordinate_transform": {
+          "description": "Human/machine-readable description of the basis change applied (handedness flip, axis swap, unit scale, SH resign). Critical for engine targets (Unity LH+Y, Unreal LH+Z cm).",
+          "type": "string"
+        },
+        "notes": {
+          "description": "Free-text honesty notes about what this export loses.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,455 @@
+{
+  "_comment": "Transcription of docs/eval/CORPUS.md (FROZEN v1, adopted 2026-06-13). CORPUS.md is the source of truth; this file is verified against it by tests/test_corpus.py for counts, IDs, and thin-structure tags. Do not edit without re-verifying against CORPUS.md.",
+  "cases": [
+    {
+      "id": "T01",
+      "modality": "text",
+      "prompt_or_spec": "A worn cast-iron skillet with a long handle, matte black surface, slight rust spots near the rim",
+      "stresses": ["Hard-surface + material variation", "slightly concave interior"],
+      "expected_failure_modes": "Interior of pan under-resolved/flat; rust treated as texture-only with no surface pitting; handle-to-body joint geometry merges into a blob",
+      "thin_structure": false
+    },
+    {
+      "id": "T02",
+      "modality": "text",
+      "prompt_or_spec": "A pair of wire-frame round eyeglasses with thin metal temples and clear glass lenses",
+      "stresses": ["Thin structures (temples, frame wire)", "transparency"],
+      "expected_failure_modes": "Temples vanish or thicken into solid bars; lenses opaque or missing; frame topology disconnected from temples",
+      "thin_structure": true
+    },
+    {
+      "id": "T03",
+      "modality": "text",
+      "prompt_or_spec": "A wooden dining chair with four thin tapered legs, a slatted backrest, and a woven rattan seat",
+      "stresses": ["Thin structures (legs)", "repeated fine geometry (slats, weave)", "articulated multi-part"],
+      "expected_failure_modes": "Legs fuse to seat as a single mass; slats/weave collapse into a texture instead of geometry; legs of unequal length (no symmetry enforcement)",
+      "thin_structure": true
+    },
+    {
+      "id": "T04",
+      "modality": "text",
+      "prompt_or_spec": "A chrome-plated robot action figure with articulated joints at shoulders, elbows, and knees, mirror-polished surface",
+      "stresses": ["Reflective/specular material", "articulated multi-part", "view-dependent appearance"],
+      "expected_failure_modes": "Mirror surface baked as flat gray or environment-reflection ghosting baked into albedo; joints not separable as parts; L4 fails to decompose specular from albedo",
+      "thin_structure": false
+    },
+    {
+      "id": "T05",
+      "modality": "text",
+      "prompt_or_spec": "A clear glass wine bottle, empty, standing upright, with a paper label wrapped around the body",
+      "stresses": ["Transparent/refractive material", "text-on-object (label)"],
+      "expected_failure_modes": "Glass rendered opaque/solid; label text illegible or smeared; refraction artifacts baked as opacity holes",
+      "thin_structure": false
+    },
+    {
+      "id": "T06",
+      "modality": "text",
+      "prompt_or_spec": "A small ceramic coffee mug with a painted logo reading 'CAFE' on the side and a glossy glaze finish",
+      "stresses": ["Text-on-object", "glossy/specular", "simple convex hard-surface (sanity baseline)"],
+      "expected_failure_modes": "Logo text garbled or illegible (known diffusion-model weakness); glossy highlight baked into texture as a fixed bright patch",
+      "thin_structure": false
+    },
+    {
+      "id": "T07",
+      "modality": "text",
+      "prompt_or_spec": "A fluffy orange tabby cat sitting upright, fur visible, tail curled around its paws",
+      "stresses": ["Organic/fuzzy geometry", "volumetric fine detail"],
+      "expected_failure_modes": "Fur reduced to smooth solid surface; tail merges with body; splat budget concentrated on body leaving fur \"bald\" patches",
+      "thin_structure": false
+    },
+    {
+      "id": "T08",
+      "modality": "text",
+      "prompt_or_spec": "A leafy potted fern with many thin, overlapping fronds and visible soil texture in a terracotta pot",
+      "stresses": ["Thin structures (fronds)", "high part-count repetition", "concave container"],
+      "expected_failure_modes": "Fronds clump into a green mass; pot interior (concave) not modeled — appears solid; soil texture flat",
+      "thin_structure": false
+    },
+    {
+      "id": "T09",
+      "modality": "text",
+      "prompt_or_spec": "A minimalist gold wedding band, plain, no stones, size 7 (approx 18mm inner diameter)",
+      "stresses": ["Scale extreme (very small)", "reflective metal", "simplicity stress-test"],
+      "expected_failure_modes": "Scale estimator defaults to \"generic object\" size (way off from ~18mm); ring hole (concave/hollow) filled in as solid disc; metallic reflection baked flat",
+      "thin_structure": false,
+      "ground_truth_scale": {
+        "description": "ring inner diameter, size 7, approx 18mm",
+        "value_mm": 18.0
+      }
+    },
+    {
+      "id": "T10",
+      "modality": "text",
+      "prompt_or_spec": "A modern L-shaped sectional sofa in light gray fabric with six rectangular cushions",
+      "stresses": ["Scale extreme (large)", "multi-part (cushions)", "soft/cloth material class for L6"],
+      "expected_failure_modes": "Cushions fused into the sofa body as one part; fabric texture/material misclassified as rigid (wrong L6 density/friction); L-shape proportions distorted",
+      "thin_structure": false
+    },
+    {
+      "id": "T11",
+      "modality": "text",
+      "prompt_or_spec": "A hollow ceramic vase, cylindrical, open at the top, with a narrow neck and a wide rounded base",
+      "stresses": ["Concave/hollow object", "thin-wall structure"],
+      "expected_failure_modes": "Vase generated as a solid cylinder (opening filled in); neck-to-base wall thickness inconsistent, breaking printability checks at L5",
+      "thin_structure": false
+    },
+    {
+      "id": "T12",
+      "modality": "text",
+      "prompt_or_spec": "An old wooden treasure chest with a curved lid, metal latch, and visible wood grain, lid open revealing an empty dark interior",
+      "stresses": ["Concave/hollow (open interior)", "multi-part (lid hinge)", "articulation"],
+      "expected_failure_modes": "Lid fused shut or interior filled solid; hinge not detected as an articulation joint in L6; interior left as a black hole (no geometry, just dark texture)",
+      "thin_structure": false
+    },
+    {
+      "id": "T13",
+      "modality": "text",
+      "prompt_or_spec": "A red bicycle with thin spoked wheels, a chain, and thin cable housings for brakes",
+      "stresses": ["Thin structures (spokes, chain, cables) — known hard case across all generators"],
+      "expected_failure_modes": "Spokes vanish entirely or merge into solid disc wheels; chain becomes a textured band; cables disappear below splat-density floor",
+      "thin_structure": true
+    },
+    {
+      "id": "T14",
+      "modality": "text",
+      "prompt_or_spec": "A stack of three hardcover books of different sizes and colors, slightly offset, with visible page edges",
+      "stresses": ["Multi-part (separable objects)", "thin structures (page edges)", "scale relationships between parts"],
+      "expected_failure_modes": "Books fuse into a single multi-colored block; page-edge thin geometry smoothed away; relative scale between the three books distorted",
+      "thin_structure": true
+    },
+    {
+      "id": "T15",
+      "modality": "text",
+      "prompt_or_spec": "A desk lamp with a flexible articulated arm made of multiple jointed segments, a conical metal shade, and a round base",
+      "stresses": ["Articulated multi-part", "thin segments", "mixed materials (metal shade + cloth/rigid base)"],
+      "expected_failure_modes": "Arm segments fuse into a single curved tube (joints not separable); shade interior (concave) not modeled; base material misclassified",
+      "thin_structure": true
+    },
+    {
+      "id": "T16",
+      "modality": "text",
+      "prompt_or_spec": "A garden gnome figurine, painted in bright primary colors, standing on a small rock",
+      "stresses": ["Known Meshy failure-mode analog: small painted figurine with fine facial/hat detail"],
+      "expected_failure_modes": "Face/hat fine detail smeared to \"melted wax\" look (documented Meshy weakness per docs/meshy-analysis.md §5.2); colors bleed across part boundaries",
+      "thin_structure": false
+    },
+    {
+      "id": "T17",
+      "modality": "text",
+      "prompt_or_spec": "The Utah teapot: a classic glossy white ceramic teapot with a curved spout, ring handle, and lid with a small knob",
+      "stresses": ["Canonical-object correctness check — Meshy is documented to sometimes return the wrong object for \"Utah teapot\" (meshy-analysis.md §5.2)"],
+      "expected_failure_modes": "Model returns a generic teapot ignoring \"Utah teapot\" canonical shape, or returns an unrelated object entirely; ring handle (concave/hollow) filled solid",
+      "thin_structure": false
+    },
+    {
+      "id": "T18",
+      "modality": "text",
+      "prompt_or_spec": "A construction crane in a simplified toy style, with a tall lattice tower, horizontal jib arm, and thin steel cables holding a hook",
+      "stresses": ["Scale extreme (tall/thin proportions)", "thin structures (lattice, cables)", "hard-surface mechanical"],
+      "expected_failure_modes": "Lattice tower collapses into a solid tapered column; cables disappear; overall proportions squashed toward a \"default cube\" aspect ratio",
+      "thin_structure": true
+    },
+    {
+      "id": "T19",
+      "modality": "text",
+      "prompt_or_spec": "A transparent plastic water bottle, half full of water, with a blue screw cap and a wrapped paper label",
+      "stresses": ["Transparent material + a visible internal volume (water) — compound transparency/concave case"],
+      "expected_failure_modes": "Water level not represented (bottle appears either fully solid or fully empty); cap material/color bleeds into bottle body; label text illegible",
+      "thin_structure": false
+    },
+    {
+      "id": "T20",
+      "modality": "text",
+      "prompt_or_spec": "A pair of scissors, open at a 45-degree angle, with metal blades and orange plastic handles, a visible pivot screw",
+      "stresses": ["Thin structures (blades)", "articulated multi-part (pivot)", "mixed material (metal + plastic) at fine scale"],
+      "expected_failure_modes": "Blades fuse into a single flat shape; pivot not detected as a joint (L6 articulation hint fails); handles and blades not separable as distinct L6 material regions",
+      "thin_structure": true
+    },
+    {
+      "id": "I01",
+      "modality": "image",
+      "prompt_or_spec": "Single photo, 3/4 view, of a matte ceramic mug on a plain table, no visible logo",
+      "stresses": ["Single-view ambiguity for a simple convex shape — baseline sanity case"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo (kitchen)"
+    },
+    {
+      "id": "I02",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a stapler from directly above (top-down only)",
+      "stresses": ["Severe single-view ambiguity — generator must hallucinate the entire underside; Truth Meter confidence channel must flag the bottom as unmeasured"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I03",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a houseplant where one side of the pot is occluded by another object (e.g., a book leaning against it)",
+      "stresses": ["Occlusion — generator must complete the occluded region and the confidence channel must mark it low"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo, staged"
+    },
+    {
+      "id": "I04",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a plain white ceramic bowl, no pattern, even studio-ish lighting",
+      "stresses": ["Textureless surface — depth/SfM cues absent, pure shape-prior reliance"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo, white tablecloth backdrop"
+    },
+    {
+      "id": "I05",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a stainless-steel kettle under indoor lighting, strong specular highlight visible on the body",
+      "stresses": ["Metallic/reflective single image — tests whether L4 separates the highlight from albedo or bakes it"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I06",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a smartphone lying flat, screen off (black glossy slab)",
+      "stresses": ["Flat reflective surface + thin profile — easy to get \"melted slab\" geometry"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I07",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a knitted wool beanie on a flat surface",
+      "stresses": ["Soft/cloth material", "fine surface texture (knit pattern) for L6 material classification"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo or Wikimedia (CC0 textile photos)"
+    },
+    {
+      "id": "I08",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a potted succulent with multiple distinct rosettes (multi-part organic)",
+      "stresses": ["Multi-part organic separation — does the model treat each rosette as a separable part for L6?"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I09",
+      "modality": "image",
+      "prompt_or_spec": "Single photo, low-angle, of a wooden bar stool showing only 2 of its 3 legs (third occluded behind the visible legs)",
+      "stresses": ["Occlusion + thin structures combined — leg count must not be hallucinated wrong"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo, staged angle"
+    },
+    {
+      "id": "I10",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a glass tumbler, empty, on a dark background, photographed against backlight (silhouette-heavy)",
+      "stresses": ["Transparency under adverse lighting — high failure-mode density"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I11",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of an action figure (articulated joints visible) viewed from the front only",
+      "stresses": ["Articulated multi-part from single view — back-side joints must be flagged low-confidence, not silently invented"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo (toy) or Wikimedia Commons toy photography (CC0)"
+    },
+    {
+      "id": "I12",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a brick (or concrete block), plain gray, no markings",
+      "stresses": ["Extreme textureless + simple geometry — tests whether scale estimator defaults sanely (bricks have a near-universal real size, good ground-truth check)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo",
+      "ground_truth_scale": {
+        "description": "standard brick dimensions (length, ~203.2mm for a US modular brick)",
+        "value_mm": 203.2
+      }
+    },
+    {
+      "id": "I13",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a hardback book, cover visible, with title text on the spine and cover",
+      "stresses": ["Text-on-object from a single view — spine vs. cover text must both attempt to render, back cover flagged unmeasured"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I14",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a small succulent in a tiny terracotta pot, photographed close-up so the pot fills most of the frame",
+      "stresses": ["Scale extreme (small) — absolute-scale estimation with a real, measurable ground truth (founder measures the pot with calipers for L1 confidence-interval validation)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo",
+      "ground_truth_scale": {
+        "description": "terracotta pot diameter, calipers-measured (placeholder pending measurement)",
+        "value_mm": 60.0
+      }
+    },
+    {
+      "id": "I15",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of an office chair (large, on casters) photographed from across a room",
+      "stresses": ["Scale extreme (large) — same ground-truth validation approach as I14 at the opposite end"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo",
+      "ground_truth_scale": {
+        "description": "office chair overall height, calipers/tape-measured (placeholder pending measurement)",
+        "value_mm": 1100.0
+      }
+    },
+    {
+      "id": "I16",
+      "modality": "image",
+      "prompt_or_spec": "Two photos (front + back) of a framed picture frame, empty, glass front",
+      "stresses": ["Multi-photo path with transparency — tests MASt3R/VGGT-class pose estimation (CLAUDE.md §4) on a thin, mostly-flat, reflective object"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photos, two angles"
+    },
+    {
+      "id": "I17",
+      "modality": "image",
+      "prompt_or_spec": "Three photos (front, left 3/4, right 3/4) of a teapot with a patterned (non-plain) glaze",
+      "stresses": ["Multi-photo path, moderate texture — the \"easy\" multi-view case as a baseline against I02/I09"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photos"
+    },
+    {
+      "id": "I18",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a wicker/rattan basket (dense repeating weave texture) empty",
+      "stresses": ["Repetitive fine geometry vs. texture — does the model attempt actual weave geometry or flatten to a texture map (relevant to L3 surface fidelity scoring)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo or Wikimedia (CC0 craft photography)"
+    },
+    {
+      "id": "I19",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a pair of leather shoes, one partially occluding the other, both visible but overlapping",
+      "stresses": ["Multi-object/occlusion ambiguity — does the generator correctly segment two objects vs. fusing them into one asset?"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "I20",
+      "modality": "image",
+      "prompt_or_spec": "Single photo of a chrome bicycle bell or similar small mirror-finish object against a complex/cluttered background",
+      "stresses": ["Reflective material + background-removal/segmentation stress — environment reflections in the chrome will literally contain the background, a classic confound"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Source plan: own photo"
+    },
+    {
+      "id": "C01",
+      "modality": "capture",
+      "prompt_or_spec": "Plain white ceramic mug (textureless), indoor on plain table, full 360° orbit at constant ~1m radius, camera height level with object",
+      "stresses": ["Textureless-surface SfM/pose failure (mug has almost no SIFT-style features) — primary stress test for the pose-free reconstruction path"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor, plain table. Lighting: soft diffuse daylight, no harsh shadow. Motion: full 360° orbit at constant ~1m radius, camera height level with object."
+    },
+    {
+      "id": "C02",
+      "modality": "capture",
+      "prompt_or_spec": "Stainless kettle (shiny/specular), indoor kitchen counter, full 360° orbit, slightly varying radius (0.8-1.2m)",
+      "stresses": ["Specular highlight \"swimming\" across the surface during orbit — tests whether reconstruction separates true geometry from moving highlights (L4 relevance)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor kitchen counter. Lighting: mixed — one window + one overhead light (multiple specular highlights that move as camera moves). Motion: full 360° orbit, slightly varying radius (0.8-1.2m)."
+    },
+    {
+      "id": "C03",
+      "modality": "capture",
+      "prompt_or_spec": "Potted plant with thin overlapping leaves (e.g., pothos or fern), indoor near window, full 360° orbit (two passes: wide + close on a leaf cluster)",
+      "stresses": ["Thin-structure capture (leaves) + potential dynamic content (leaf flutter) — relevant to L7 dynamics layer triggering correctly (should NOT trigger for near-static leaves, confidence channel should note minor inconsistency)"],
+      "expected_failure_modes": "",
+      "thin_structure": true,
+      "notes": "Environment: indoor near window. Lighting: natural daylight, slight motion in leaves from airflow possible — note if any movement occurs. Motion: full 360° orbit, two passes: one wide (full plant), one close (single leaf cluster)."
+    },
+    {
+      "id": "C04",
+      "modality": "capture",
+      "prompt_or_spec": "Outdoor wooden bench, outdoor garden/yard/park, full 360° orbit at ~1.5-2m radius, camera height ~1m",
+      "stresses": ["Outdoor scale/lighting variability, larger object, ground-plane contact reasoning (relevant to scene-seed/ground-plane work)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: outdoor, garden/yard/park. Lighting: natural daylight, partly cloudy preferred (even lighting). Motion: full 360° orbit at ~1.5-2m radius, camera height ~1m."
+    },
+    {
+      "id": "C05",
+      "modality": "capture",
+      "prompt_or_spec": "Bicycle (spoked wheels, chain, cables), outdoor or garage against plain wall, full 360° orbit at ~2m radius plus second close pass on one wheel",
+      "stresses": ["Thin-structure capture stress at video scale — spokes/chain/cables are at/below typical SfM feature-survival resolution from a distance"],
+      "expected_failure_modes": "",
+      "thin_structure": true,
+      "notes": "Environment: outdoor or garage, against plain wall. Lighting: even outdoor shade or garage lighting. Motion: full 360° orbit at ~2m radius; second close pass on one wheel only."
+    },
+    {
+      "id": "C06",
+      "modality": "capture",
+      "prompt_or_spec": "Glass drinking glass (empty, transparent), indoor on a table with a patterned background visible through the glass, full 360° orbit, slow pace, ~1m radius",
+      "stresses": ["Transparent-object capture — refraction breaks standard SfM correspondence; tests pose-free (DUSt3R/MASt3R-class) robustness vs. COLMAP fallback"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor, on a table with a patterned background visible through the glass. Lighting: indoor ambient, avoid direct reflections of the camera/phone in the glass. Motion: full 360° orbit, slow pace, ~1m radius."
+    },
+    {
+      "id": "C07",
+      "modality": "capture",
+      "prompt_or_spec": "Small handheld object (wristwatch or jewelry item), indoor on a rotating turntable or lazy-susan if available else handheld orbit, close orbit ~30cm radius, slow, may need 2 passes",
+      "stresses": ["Scale extreme (small object), fine detail at macro distance, metric-scale ground truth (founder measures the object with calipers for L1 validation)"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor, on a rotating turntable or lazy-susan if available, else handheld orbit. Lighting: soft box / diffuse desk lamp, close-up. Motion: close orbit ~30cm radius, slow, may need 2 passes (top half, bottom half).",
+      "ground_truth_scale": {
+        "description": "wristwatch/jewelry item, calipers-measured (placeholder pending measurement)",
+        "value_mm": 40.0
+      }
+    },
+    {
+      "id": "C08",
+      "modality": "capture",
+      "prompt_or_spec": "Hardback book lying open, pages visible with text and an illustration, indoor on flat surface, partial arc (~120° sweep, not full 360°)",
+      "stresses": ["Text-on-object at video scale (page text legibility in reconstructed texture); thin geometry (paper-thin pages, individually)"],
+      "expected_failure_modes": "",
+      "thin_structure": true,
+      "notes": "Environment: indoor, flat surface. Lighting: even overhead lighting, no glare on pages. Motion: partial arc (not full 360° — book has a clear \"front\" only), ~120° sweep over the open book."
+    },
+    {
+      "id": "C09",
+      "modality": "capture",
+      "prompt_or_spec": "A person's hand holding a small object (e.g., an apple), object rotated by hand rather than camera moving, indoor plain background behind hand",
+      "stresses": ["Dynamic/occlusion content within an otherwise static scene — tests segmentation of the target object from a moving occluder (hand) and whether occluded frames degrade or are correctly down-weighted"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor, plain background behind hand. Lighting: soft even lighting. Motion: camera mostly static, object rotated through ~360° by hand, occasional brief hand occlusion of part of the object."
+    },
+    {
+      "id": "C10",
+      "modality": "capture",
+      "prompt_or_spec": "A simple two-part toy or mechanism with one moving part articulated through its range during the video (e.g., a pair of pliers opened/closed, a hinged box lid raised/lowered), indoor on plain table, camera orbits slowly (~180°) while the part is articulated partway through the capture",
+      "stresses": ["The genuine L7 dynamics-layer trigger case — deliberately dynamic content, tests 4DGS/deformable path activation vs. the static-scene default, and whether AURIGA correctly reports which frames correspond to which articulation state"],
+      "expected_failure_modes": "",
+      "thin_structure": false,
+      "notes": "Environment: indoor, plain table. Lighting: even indoor lighting. Motion: camera orbits slowly (~180°) while the part is articulated partway through the capture (held in 2-3 distinct poses, a few seconds each)."
+    }
+  ]
+}

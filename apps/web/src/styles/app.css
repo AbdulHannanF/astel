@@ -1,0 +1,271 @@
+/* Astel app shell — instrument layout.
+ * Grid: top status strip / [viewport | inspector] / generation dock.
+ * The viewport is the hero and the only luminous surface; chrome recedes.
+ */
+
+.app {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  background: var(--ink-1);
+}
+
+/* ---------- Top status strip ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--ink-0);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  user-select: none;
+}
+.brand__mark {
+  width: 22px;
+  height: 22px;
+}
+.brand__word {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--text-lg);
+  letter-spacing: 0.14em;
+  color: var(--text-hi);
+  text-transform: uppercase;
+}
+.brand__tag {
+  font-size: var(--text-xs);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-left: var(--space-sm);
+  margin-left: var(--space-2xs);
+  border-left: 1px solid var(--line);
+}
+
+.topbar__spacer {
+  flex: 1;
+}
+
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: var(--text-lo);
+  text-transform: uppercase;
+}
+.health__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--text-faint);
+  box-shadow: 0 0 0 0 transparent;
+  transition: background var(--dur-mid);
+}
+.health--ok .health__dot {
+  background: var(--measured);
+  box-shadow: 0 0 10px -1px var(--measured);
+}
+.health--down .health__dot {
+  background: var(--danger);
+}
+
+/* ---------- Main split ---------- */
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 332px;
+  min-height: 0;
+}
+
+.viewport-wrap {
+  position: relative;
+  min-height: 0;
+  background: radial-gradient(
+    120% 120% at 50% 38%,
+    oklch(19% 0.012 70) 0%,
+    var(--ink-0) 70%
+  );
+  overflow: hidden;
+}
+
+.viewport-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Floating instrument readouts over the viewport */
+.viewport-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
+.hud-chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-sm);
+  background: oklch(14% 0.008 70 / 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  color: var(--text-mid);
+}
+.hud-chip b {
+  color: var(--text-hi);
+  font-weight: 600;
+}
+.hud-chip .swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.viewport-actions {
+  pointer-events: auto;
+  display: inline-flex;
+  gap: var(--space-2xs);
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  background: oklch(14% 0.008 70 / 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  color: var(--text-mid);
+  transition:
+    color var(--dur-fast),
+    border-color var(--dur-fast),
+    background var(--dur-fast);
+}
+.icon-btn:hover {
+  color: var(--text-hi);
+  border-color: var(--ink-4);
+  background: oklch(18% 0.009 71 / 0.85);
+}
+
+/* Loading / error overlays */
+.viewport-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.spinner {
+  --r: 13px;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  border-radius: 50%;
+  border: 2px solid var(--ink-4);
+  border-top-color: var(--accent-bright);
+  animation: spin 0.9s linear infinite;
+}
+.loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-lo);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error-card {
+  pointer-events: auto;
+  max-width: 38ch;
+  text-align: center;
+  padding: var(--space-lg);
+  background: var(--ink-2);
+  border: 1px solid var(--danger-soft);
+  border-radius: var(--r-lg);
+}
+.error-card h3 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-xs);
+}
+.error-card p {
+  color: var(--text-lo);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-md);
+}
+
+/* ---------- Right rail: inspector + truth meter ---------- */
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line-soft);
+  background: var(--ink-1);
+}
+.rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+.panel__title {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-mid);
+}
+.panel__meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Generation dock ---------- */
+.dock {
+  border-top: 1px solid var(--line-soft);
+  background: var(--ink-0);
+  padding: var(--space-md) var(--space-lg);
+}

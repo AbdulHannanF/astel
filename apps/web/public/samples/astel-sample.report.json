@@ -1,0 +1,25 @@
+{
+  "asset_id": "astel-sample-torusknot",
+  "name": "Reference Torus Knot",
+  "modality": "generated",
+  "splat_count": 48000,
+  "splat_budget": "100k lowpoly",
+  "active_layer": "L3",
+  "scale": {
+    "longest_axis_m": 0.182,
+    "confidence": 0.41,
+    "method": "VLM size estimate (no metric source)",
+    "note": "Generated asset — scale is an estimate the user can override."
+  },
+  "geometry": {
+    "chamfer_mm_vs_l1": 0.9,
+    "psnr_db": 31.2,
+    "ssim": 0.946,
+    "normals_present": true
+  },
+  "provenance": {
+    "measured_ratio": 0.0,
+    "generated_ratio": 1.0,
+    "note": "Fully synthetic sample. Capture-path assets report a real measured ratio here."
+  }
+}

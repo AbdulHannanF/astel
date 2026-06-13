@@ -1,0 +1,194 @@
+/* Truth Meter — the honesty surface. Measured (teal) vs generated (brass),
+ * scale confidence, geometric error. No competitor shows this; it's the brand.
+ */
+
+.truth {
+  background: var(--ink-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  padding: var(--space-md);
+}
+
+.truth__badge {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--measured);
+}
+
+.truth__title-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.truth__stub-pill {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--ink-1);
+  background: var(--warn);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+}
+
+.truth__caveat {
+  margin-top: var(--space-sm);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+/* Provenance bar: measured | generated */
+.prov {
+  margin: var(--space-md) 0 var(--space-sm);
+}
+.prov__bar {
+  display: flex;
+  height: 8px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--ink-3);
+}
+.prov__measured {
+  background: var(--measured);
+}
+.prov__generated {
+  background: var(--accent);
+}
+.prov__legend {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.prov__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-lo);
+}
+.prov__legend b {
+  color: var(--text-hi);
+  font-weight: 600;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+.dot--measured {
+  background: var(--measured);
+}
+.dot--generated {
+  background: var(--accent);
+}
+
+/* Metric grid */
+.truth__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: var(--space-md);
+  background: var(--line-soft);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.metric {
+  background: var(--ink-2);
+  padding: var(--space-sm);
+}
+.metric__label {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.metric__value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-lg);
+  color: var(--text-hi);
+  margin-top: 2px;
+}
+.metric__value small {
+  font-size: var(--text-xs);
+  color: var(--text-lo);
+  margin-left: 3px;
+}
+
+/* Scale confidence */
+.confidence {
+  margin-top: var(--space-md);
+}
+.confidence__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.confidence__head .label {
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.confidence__head .pct {
+  color: var(--text-hi);
+}
+.confidence__track {
+  margin-top: 6px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--ink-3);
+  overflow: hidden;
+}
+.confidence__fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width var(--dur-slow) var(--ease-out-quart);
+}
+.confidence__fill--low {
+  background: var(--warn);
+}
+.confidence__fill--high {
+  background: var(--measured);
+}
+.confidence__note {
+  margin-top: var(--space-xs);
+  font-size: var(--text-xs);
+  color: var(--text-lo);
+  line-height: 1.45;
+}
+
+.truth__skeleton {
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    90deg,
+    var(--ink-3) 0%,
+    var(--ink-4) 50%,
+    var(--ink-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  margin-bottom: var(--space-sm);
+}
+.truth__skeleton:nth-child(2) {
+  width: 70%;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.truth__error {
+  font-size: var(--text-sm);
+  color: var(--text-lo);
+}
