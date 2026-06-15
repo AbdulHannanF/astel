@@ -7,12 +7,13 @@ the same endpoint will subscribe to a durable workflow's event history instead.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,17 +22,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
+from .billing import price_generation, schedule_dict
 from .config import Settings, get_settings
 from .db import Generation, get_session, init_db
 from .engine import InProcessStubEngine, TaskEngine, TemporalTaskEngine
-from .producer import produce_artifacts
+from .generation_spec_stage import (
+    apply_spec_scale_to_report,
+    run_generation_spec_stage,
+)
+from .gpu_producer import produce_artifacts_dispatch
+from .physics_material_stage import run_physics_material_stage
 from .schemas import (
     PIPELINE,
     ArtifactRef,
+    BillingSummary,
     CaptureRef,
     CreateGenerationRequest,
+    GenerationMode,
     GenerationResource,
     Modality,
+    PricingResource,
     StageSpec,
     TaskStatus,
 )
@@ -105,6 +115,73 @@ def _content_type_for(name: str) -> str:
     return _CONTENT_TYPES.get(Path(name).suffix, "application/octet-stream")
 
 
+_LEDGER_ARTIFACT = "credit-ledger.json"
+
+_CONDITIONING_VALUES = frozenset({"prompt", "image", "video", "none"})
+
+
+def _conditioning_of(
+    row_value: str | None,
+) -> Literal["prompt", "image", "video", "none"] | None:
+    """Narrow a DB ``conditioning`` string to the schema's closed literal.
+
+    Returns ``None`` for rows written before this column existed (or any
+    unexpected value) -- callers must treat ``None`` as "unknown", not as a
+    fourth honest value.
+    """
+    if row_value in _CONDITIONING_VALUES:
+        return row_value  # type: ignore[return-value]
+    return None
+
+
+def _build_and_store_billing(
+    task_id: str,
+    mode: str,
+    refine_of: str | None,
+    store: ArtifactStore,
+    spec_payload: dict[str, object] | None,
+) -> BillingSummary:
+    """Price the generation from delivered artifacts, store + return the ledger.
+
+    The LLM line is folded in only when the Generation Spec stage actually
+    incurred a measured cost this task (text path, fixture hit / live). A refine
+    keyed on a prior preview never runs the spec stage, so it never re-charges
+    it (CLAUDE.md §7).
+    """
+    llm_cost_usd: float | None = None
+    if spec_payload and spec_payload.get("status") == "ok":
+        ledger = spec_payload.get("ledger")
+        if isinstance(ledger, dict):
+            cost = ledger.get("cost_usd")
+            if isinstance(cost, (int, float)):
+                llm_cost_usd = float(cost)
+
+    credit_ledger = price_generation(
+        mode=mode,
+        delivered_artifacts=store.list_names(task_id),
+        llm_cost_usd=llm_cost_usd,
+        refine_of=refine_of,
+    )
+    store.put(
+        task_id,
+        _LEDGER_ARTIFACT,
+        json.dumps(credit_ledger.to_dict(), indent=2).encode("utf-8"),
+    )
+    return BillingSummary.model_validate(credit_ledger.to_dict())
+
+
+def _load_billing(task_id: str, store: ArtifactStore) -> BillingSummary | None:
+    """Return the stored credit ledger as a :class:`BillingSummary`, if any."""
+    path = store.path_for(task_id, _LEDGER_ARTIFACT)
+    if path is None:
+        return None
+    try:
+        return BillingSummary.model_validate(json.loads(path.read_text()))
+    except Exception:  # a malformed ledger must not break the read path
+        logger.exception("failed to load billing for %s", task_id)
+        return None
+
+
 def _artifacts_for(task_id: str, store: ArtifactStore) -> list[ArtifactRef]:
     """Build :class:`ArtifactRef` entries for everything currently on disk."""
     refs: list[ArtifactRef] = []
@@ -133,6 +210,12 @@ async def healthz() -> dict[str, str]:
 async def pipeline() -> list[StageSpec]:
     """The static stage definitions the client renders on its progress rail."""
     return list(PIPELINE)
+
+
+@app.get("/v1/pricing", tags=["meta"], response_model=PricingResource)
+async def pricing() -> PricingResource:
+    """The credit price schedule: per-layer costs + preview/refine tiers."""
+    return PricingResource.model_validate(schedule_dict())
 
 
 # Captures are stored in the same artifact store under a dedicated namespace so
@@ -195,7 +278,10 @@ async def create_capture(file: UploadFile, store: StoreDep) -> CaptureRef:
     status_code=201,
 )
 async def create_generation(
-    body: CreateGenerationRequest, session: SessionDep, store: StoreDep
+    body: CreateGenerationRequest,
+    session: SessionDep,
+    store: StoreDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> GenerationResource:
     """Submit a generation. Returns a task id and its SSE events URL."""
     task_id = str(uuid.uuid4())
@@ -205,14 +291,59 @@ async def create_generation(
         prompt=body.prompt,
         status=TaskStatus.QUEUED.value,
         capture_id=body.capture_id,
+        mode=body.mode.value,
+        refine_of=body.refine_of,
     )
     session.add(row)
     await session.commit()
 
+    billing: BillingSummary | None = None
     try:
-        produce_artifacts(task_id, body.modality.value, body.prompt, store)
-    except Exception:  # production failure must not fail the submit
+        production = produce_artifacts_dispatch(
+            task_id,
+            body.modality.value,
+            body.prompt,
+            store,
+            capture_id=body.capture_id,
+        )
+        row.produced = True
+        row.splats = production.get("splats")
+        row.production_error = None
+        conditioning = production.get("conditioning")
+        row.conditioning = conditioning if isinstance(conditioning, str) else "none"
+        await session.commit()
+        # Text-pipeline Generation Spec stage (offline by default; founder-gated
+        # for live spend). Runs after produce so it can thread the LLM size
+        # estimate into the freshly-written quality report. A refine keyed on a
+        # prior preview inherits that preview's spec, so it is skipped here —
+        # the LLM spend (and the credit line) belong to the preview, not the
+        # refine (CLAUDE.md §7).
+        spec_payload: dict[str, object] | None = None
+        if body.refine_of is None:
+            spec_payload = run_generation_spec_stage(
+                task_id, body.modality.value, body.prompt, store, settings
+            )
+            apply_spec_scale_to_report(task_id, store, spec_payload)
+            # L6 world-awareness (M4): reason over the spec for per-region physics
+            # materials + articulation, stored as the billable l6.json layer.
+            # Offline/skipped by default (same founder gate as the spec stage);
+            # runs before billing so a delivered L6 is metered.
+            run_physics_material_stage(
+                task_id, body.modality.value, spec_payload, store, settings
+            )
+        # Price the generation by its billing tier and store the credit ledger.
+        billing = _build_and_store_billing(
+            task_id, body.mode.value, body.refine_of, store, spec_payload
+        )
+        row.credits = billing.total_credits
+        await session.commit()
+    except Exception as exc:  # production failure must not fail the submit
         logger.exception("artifact production failed for %s", task_id)
+        row.produced = False
+        row.splats = None
+        row.production_error = str(exc)
+        row.conditioning = "none"
+        await session.commit()
 
     return GenerationResource(
         id=task_id,
@@ -222,6 +353,10 @@ async def create_generation(
         created_at=row.created_at.isoformat(),
         events_url=f"/v1/generations/{task_id}/events",
         artifacts=_artifacts_for(task_id, store),
+        mode=body.mode,
+        refine_of=body.refine_of,
+        billing=billing,
+        conditioning=_conditioning_of(row.conditioning),
     )
 
 
@@ -240,6 +375,10 @@ async def get_generation(
         created_at=row.created_at.isoformat(),
         events_url=f"/v1/generations/{task_id}/events",
         artifacts=_artifacts_for(task_id, store),
+        mode=GenerationMode(row.mode),
+        refine_of=row.refine_of,
+        billing=_load_billing(task_id, store),
+        conditioning=_conditioning_of(row.conditioning),
     )
 
 
@@ -264,7 +403,18 @@ async def generation_events(
                 db_row.status = TaskStatus.RUNNING.value
                 await inner.commit()
 
-            async for event in engine.run(task_id):
+            produced = db_row.produced if db_row is not None else True
+            splats = db_row.splats if db_row is not None else None
+            production_error = (
+                db_row.production_error if db_row is not None else None
+            )
+
+            async for event in engine.run(
+                task_id,
+                produced=produced,
+                splats=splats,
+                error=production_error,
+            ):
                 yield {"event": "progress", "data": event.model_dump_json()}
                 terminal = event.status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED)
                 if terminal and db_row is not None:

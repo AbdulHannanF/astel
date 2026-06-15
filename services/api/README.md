@@ -8,9 +8,12 @@ The Astel API gateway — FastAPI, async SQLAlchemy 2, SSE progress. M1 skeleton
 |---|---|---|
 | `GET`  | `/healthz` | Liveness probe |
 | `GET`  | `/v1/pipeline` | Static stage specs (L0→L3) for the progress rail |
-| `POST` | `/v1/generations` | Submit `{modality, prompt}` → task id + events URL |
-| `GET`  | `/v1/generations/{id}` | Fetch a generation's status |
+| `GET`  | `/v1/pricing` | Credit price schedule (preview/refine tiers — see [billing](../../docs/architecture/billing.md)) |
+| `POST` | `/v1/captures` | Upload input image/video bytes → `capture_id` |
+| `POST` | `/v1/generations` | Submit `{modality, prompt, mode?, refine_of?, capture_id?}` → task id + billing |
+| `GET`  | `/v1/generations/{id}` | Fetch a generation's status + billing |
 | `GET`  | `/v1/generations/{id}/events` | **SSE** stream of L0→L3 progress |
+| `GET`  | `/v1/generations/{id}/artifacts/{name}` | Download an artifact (`l3.ply`, `credit-ledger.json`, …) |
 
 Interactive docs at `/docs` when running.
 

@@ -11,8 +11,12 @@ and a 3D printer.
 
 > Name locked **Astel** (founder decision, 2026-06-13). Repo folder still says AURIGA;
 > rename at will — nothing in-tree depends on the folder name.
-> Status: **Phase R closed. M1 closed. M2 spine landed (CPU)** — real per-task artifacts
-> flow end-to-end — see [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md).
+> Status: **Phase R · M1 · M2 · M3 closed; M4 (world-awareness) in progress.** The
+> real generative path is **image → 3D** (TripoSplat L2 → 2DGS L3, verified live on
+> the GPU box). **Text → 3D is not built yet** (text→multiview is the next stage) —
+> a text prompt today returns a placeholder shape + structured spec, clearly
+> flagged. **To test the MVP, start with [docs/MVP_TESTING.md](docs/MVP_TESTING.md).**
+> Runway: [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md).
 
 ## Repository map
 
@@ -33,10 +37,13 @@ and a 3D printer.
 
 - **R — Research & decisions** ✅ closed
 - **M1** Skeleton: monorepo, task engine, API, stub pipeline, web viewer ✅ closed
-- **M2** Capture path: photos/video → splats (reality first) ← in progress: CPU spine
-  landed (real per-task artifacts); capture path GPU-gated
-- **M3** Generative path: text & image → splats
+- **M2** Capture path: photos/video → splats (reality first) ✅ spine landed
+  (DTU geometry numbers, COLMAP SfM, 2DGS L3 surface refinement)
+- **M3** Generative path: image → splats ✅ (TripoSplat L2 → 2DGS L3); Generation
+  Spec LLM stage ✅; preview/refine billing ✅. **Caveat: text → splats is not
+  wired** — only the LLM spec runs for text; the geometry generator is image-only.
 - **M4** World-awareness: relighting, collision, physics-materials, print path
+  ← in progress (L5 solidification landed; L6 physics-material next)
 - **M5** Engine plugins, SDK, MCP server, docs site
 - **M6** Dynamics, scenes, hardening, launch
 
@@ -50,5 +57,6 @@ pnpm run up         # one-command bring-up (web + API together)
 Alternatives: `pnpm run dev:all` (web + API together) or `pnpm dev` (web app only;
 Vite proxies `/v1` and `/healthz` to the API at :8000).
 
-GPU pipeline work is deferred by founder decision (2026-06-13): make everything work in
-stub/CPU mode first, then scale onto the GPU boxes.
+The default producer is the CPU **stub** (procedural placeholder geometry, works on any
+box). The real GPU generative path (image → splats) runs on the 2×4090 box with
+`ASTEL_PRODUCER=gpu` — see [docs/MVP_TESTING.md](docs/MVP_TESTING.md) for both paths.

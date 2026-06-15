@@ -8,6 +8,7 @@ model but are not produced by the stub pipeline yet.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,18 @@ class Modality(StrEnum):
     TEXT = "text"
     IMAGE = "image"
     VIDEO = "video"
+
+
+class GenerationMode(StrEnum):
+    """Billing tier for a generation (CLAUDE.md §7, Meshy two-stage model).
+
+    ``preview`` charges only the cheap L0–L2 exploration layers; ``refine``
+    charges the L3 hero layer (+ any add-ons), and when keyed on a prior preview
+    via ``refine_of`` it pays only for the new work. See ``billing.py``.
+    """
+
+    PREVIEW = "preview"
+    REFINE = "refine"
 
 
 class TaskStatus(StrEnum):
@@ -103,6 +116,12 @@ class CreateGenerationRequest(BaseModel):
     # but the id is persisted so the capture→generation link is real and
     # threadable into the GPU path (M2).
     capture_id: str | None = None
+    # Billing tier (CLAUDE.md §7). Defaults to ``refine`` (a full generation);
+    # set ``preview`` for the cheap L0–L2 exploration tier.
+    mode: GenerationMode = GenerationMode.REFINE
+    # When this is a follow-up refine of a prior preview, its task id. Billing
+    # then charges only the new refine work, never re-charging the preview.
+    refine_of: str | None = None
 
 
 class ArtifactRef(BaseModel):
@@ -114,6 +133,29 @@ class ArtifactRef(BaseModel):
     bytes: int
 
 
+class CreditLineItem(BaseModel):
+    """One charge on a generation's credit ledger (see ``billing.py``)."""
+
+    code: str
+    label: str
+    tier: str
+    credits: float
+    usd: float
+    detail: str = ""
+
+
+class BillingSummary(BaseModel):
+    """The credit accounting returned with a generation (CLAUDE.md §7)."""
+
+    mode: GenerationMode
+    refine_of: str | None = None
+    items: list[CreditLineItem] = []
+    total_credits: float
+    total_usd: float
+    credit_usd_rate: float
+    caveats: list[str] = []
+
+
 class GenerationResource(BaseModel):
     id: str
     modality: Modality
@@ -122,6 +164,32 @@ class GenerationResource(BaseModel):
     created_at: str
     events_url: str
     artifacts: list[ArtifactRef] = []
+    mode: GenerationMode = GenerationMode.REFINE
+    refine_of: str | None = None
+    billing: BillingSummary | None = None
+    # What the L3 geometry was actually conditioned on for this task (audit
+    # recommendation #2). "none" means a prompt/capture-independent
+    # placeholder was produced — distinct from "this asset is unconditioned
+    # by design" being buried only in prose caveats.
+    conditioning: Literal["prompt", "image", "video", "none"] | None = None
+
+
+class LayerPriceRef(BaseModel):
+    """A layer's credit cost in the public price schedule."""
+
+    code: str
+    label: str
+    tier: str
+    credits: float
+
+
+class PricingResource(BaseModel):
+    """The ``/v1/pricing`` schedule: per-layer credit costs + mode tiers."""
+
+    credit_usd_rate: float
+    layers: list[LayerPriceRef]
+    modes: dict[str, list[str]]
+    notes: list[str] = []
 
 
 class StageMetrics(BaseModel):

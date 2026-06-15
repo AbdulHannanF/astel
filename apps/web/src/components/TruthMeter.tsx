@@ -1,17 +1,27 @@
+import type { Conditioning } from "../lib/api.ts";
 import type { QualityReport } from "../lib/report.ts";
 import "./TruthMeter.css";
 
 interface TruthMeterProps {
   report: QualityReport | null;
   errored: boolean;
+  /**
+   * What the current asset's L3 geometry was conditioned on (audit
+   * recommendation #2). When `"none"`, the geometry is a
+   * prompt/capture-independent placeholder — surfaced as an honest pill so
+   * this never reads as "your input, generated".
+   */
+  conditioning?: Conditioning | null;
 }
 
 export function TruthMeter({
   report,
   errored,
+  conditioning,
 }: TruthMeterProps): React.JSX.Element {
   const isStub =
     report !== null && report.origin != null && report.origin !== "measured";
+  const isUnconditioned = conditioning === "none";
 
   return (
     <section className="panel">
@@ -24,6 +34,14 @@ export function TruthMeter({
               title="Stub pipeline output — illustrative, not measured"
             >
               STUB
+            </span>
+          )}
+          {isUnconditioned && (
+            <span
+              className="truth__stub-pill"
+              title="This geometry was not generated from your prompt or upload"
+            >
+              PLACEHOLDER — NOT FROM YOUR INPUT
             </span>
           )}
         </span>

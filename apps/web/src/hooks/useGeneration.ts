@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import {
   createGeneration,
   streamGenerationEvents,
+  type Conditioning,
   type Modality,
   type ProgressEvent,
 } from "../lib/api.ts";
@@ -19,9 +20,20 @@ export interface GenerationState {
   /** Latest progress event from the SSE stream, if any. */
   last: ProgressEvent | null;
   error: string | null;
+  /**
+   * What this generation's geometry was conditioned on, from the
+   * POST /v1/generations response (audit recommendation #2). `null` while
+   * idle/submitting or if the field was absent from the response.
+   */
+  conditioning: Conditioning | null;
 }
 
-const INITIAL: GenerationState = { phase: "idle", last: null, error: null };
+const INITIAL: GenerationState = {
+  phase: "idle",
+  last: null,
+  error: null,
+  conditioning: null,
+};
 
 /**
  * Drives a generation: POST /v1/generations, then consume its SSE event stream,
@@ -57,14 +69,18 @@ export function useGeneration(): {
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      setState({ phase: "submitting", last: null, error: null });
+      setState({ phase: "submitting", last: null, error: null, conditioning: null });
 
       try {
         const gen = await createGeneration(
           { modality, prompt, capture_id: captureId ?? null },
           ctrl.signal,
         );
-        setState((s) => ({ ...s, phase: "running" }));
+        setState((s) => ({
+          ...s,
+          phase: "running",
+          conditioning: gen.conditioning ?? null,
+        }));
 
         for await (const evt of streamGenerationEvents(gen.id, ctrl.signal)) {
           setState((s) => ({ ...s, phase: "running", last: evt }));
@@ -85,6 +101,7 @@ export function useGeneration(): {
           last: null,
           error:
             err instanceof Error ? err.message : "Generation failed to start",
+          conditioning: null,
         });
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;

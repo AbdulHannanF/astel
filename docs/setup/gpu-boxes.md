@@ -4,10 +4,18 @@ Two machines carry all GPU work (dev box has only a 4 GB Quadro):
 
 | Box | Hardware | Tailscale IP | Role | Status (2026-06-12) |
 |---|---|---|---|---|
-| **A** | 2× RTX 4090 (24 GB), 128 GB RAM, Threadripper | `100.87.142.33` | Refine pool, model experiments, TRELLIS/MapAnything | Pings OK; **SSH closed** — needs setup |
+| **A** | 2× RTX 4090 (24 GB), 128 GB RAM, Threadripper (`THREADRIPPER-48`) | `100.87.142.33` | Refine pool, model experiments, TRELLIS/MapAnything | **ONLINE (session 7).** Native Windows; CUDA 12.9 + VS2026; gsplat builds + trains. Agent runs on the box directly. |
 | **B** | 3× RTX 3080 (10–12 GB), 128 GB RAM | `100.70.127.42` | Preview pool (L0–L2), CPU-heavy stages (SfM, SDF, convex decomp) | Pings OK; **SSH already open** — needs username |
 
-Both are Windows. Decision ([DECISIONS.md](../research/DECISIONS.md) §product C6): **WSL2,
+> **UPDATE 2026-06-14 (session 7):** the WSL2 plan below is **reversed for Box A** — see
+> [DECISIONS.md](../research/DECISIONS.md) §"2026-06-14 — GPU stack: native Windows".
+> WSL2 was hard-blocked on Box A (virtualization off in firmware). The GPU stack runs
+> **native Windows** (CUDA Toolkit 12.9 + Visual Studio 2026 MSVC). No SSH/WSL bring-up
+> was needed — reproduce the env with [`scripts/setup-gpu-env.ps1`](../../scripts/setup-gpu-env.ps1)
+> and run gsplat commands via `pipelines/gpu/run-python.cmd`. The WSL2 procedure below is
+> retained for Box B / historical reference only.
+
+Both are Windows. Original decision (now superseded for Box A): **WSL2,
 no dual-booting**. CUDA-in-WSL2 is mature; the founder runs one script once per box; the
 agent does everything else over SSH (including all Ubuntu-side setup: drivers check, uv,
 Python 3.11 env, CUDA toolchain inside WSL, repo clone, model downloads).
@@ -34,6 +42,25 @@ Python 3.11 env, CUDA toolchain inside WSL, repo clone, model downloads).
    4. TRELLIS v1/v2 import-graph license check + image→gaussian generation.
    5. The distillation experiment (R-T1 de-risk): image → TRELLIS.2 geometry prior →
       2DGS fit → Chamfer + PSNR report.
+
+## COLMAP (SfM front-end) — installed on Box A, session 8 (2026-06-14)
+
+COLMAP **4.1.0.dev0** (official `colmap-x64-windows-cuda.zip`, CUDA build) is
+installed to `D:\Astel\tools\colmap\` (the `tools/` dir is gitignored — binaries
+never go in git). Reproduce:
+
+```
+curl -sL -o tools/colmap-cuda.zip \
+  https://github.com/colmap/colmap/releases/download/4.0.4/colmap-x64-windows-cuda.zip
+# (4.0.4 is the release tag; the bundled binary self-reports 4.1.0.dev0)
+Expand-Archive tools/colmap-cuda.zip tools/colmap
+tools/colmap/bin/colmap.exe help     # smoke: prints version + command list
+```
+
+The binary launches cleanly with CUDA on this box. A **functional** SfM smoke
+(feature_extractor → exhaustive_matcher → mapper → registered-pose count) is
+deferred to the real-capture session — it needs textured real images (founder's
+orbit videos) to be representative; low-texture synthetic renders are not.
 
 ## Notes
 

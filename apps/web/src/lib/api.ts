@@ -45,6 +45,14 @@ export interface CaptureRef {
   bytes: number;
 }
 
+/**
+ * What the L3 geometry was actually conditioned on for this task (audit
+ * recommendation #2 — see docs/research/15-pipeline-wiring-audit.md). "none"
+ * means a prompt/capture-independent placeholder was produced; `null` means
+ * the field is unknown (e.g. a row written before this field existed).
+ */
+export type Conditioning = "prompt" | "image" | "video" | "none";
+
 export interface GenerationResource {
   id: string;
   modality: Modality;
@@ -53,6 +61,7 @@ export interface GenerationResource {
   created_at: string;
   events_url: string;
   artifacts?: GenerationArtifact[];
+  conditioning?: Conditioning | null;
 }
 
 export class ApiError extends Error {

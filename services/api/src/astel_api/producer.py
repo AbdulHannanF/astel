@@ -229,6 +229,11 @@ def build_quality_report(*, count: int, modality: str) -> dict[str, Any]:
             "Stub pipeline output: metrics are illustrative placeholders, not "
             "measured. Real geometric error and fidelity arrive with the GPU "
             "reconstruction path (M2).",
+            "The geometry shown is a deterministic procedural placeholder seeded "
+            "from the task id — it does NOT represent the prompt or any real "
+            "object. Prompt/image-conditioned geometry comes from the GPU "
+            "generative path (image -> TripoSplat today; text -> multiview is "
+            "not built yet).",
         ],
     }
 
@@ -278,8 +283,10 @@ def build_package_quality_report(*, modality: str) -> QualityReport:
         ),
         caveats=[
             f"origin=stub; modality={modality}. Procedurally generated, not "
-            "reconstructed. All quality metrics are unmeasured (null) by "
-            "design until the GPU reconstruction path lands (M2).",
+            "reconstructed: the geometry is a prompt-independent placeholder "
+            "seeded from the task id, not a model of the prompt. All quality "
+            "metrics are unmeasured (null) by design until the GPU "
+            "reconstruction path lands (M2).",
         ],
     )
 

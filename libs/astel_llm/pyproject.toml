@@ -1,0 +1,49 @@
+[project]
+name = "astel-llm"
+version = "0.1.0"
+description = "Astel model-agnostic LLM layer: Generation Spec stage, fixture-backed adapter, token-cost ledger."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+# The live Anthropic backend is opt-in. The fixture path (and all tests) run
+# WITHOUT this installed and without any API key — founder adds the key + this
+# extra at the very end to enable real calls.
+live = ["anthropic>=0.69"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/astel_llm"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+# Optional [live] dependency, lazily imported in AnthropicAdapter; not installed
+# in the default dev/test env (the fixture path needs no SDK).
+module = ["anthropic", "anthropic.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

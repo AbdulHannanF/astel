@@ -50,7 +50,12 @@ Browser (apps/web)
   GET  /v1/generations/{id}/artifacts/{name}    ──▶  FileResponse from the ArtifactStore
                                                         (400 on bad name, 404 if missing)
   GET  /v1/pipeline                             ──▶  static StageSpec list for the progress rail
+  GET  /v1/pricing                              ──▶  credit price schedule (preview/refine tiers)
 ```
+
+`POST /v1/generations` also accepts `mode` (`preview`|`refine`) + `refine_of` and returns a
+`billing` summary; every generation stores a `credit-ledger.json` artifact. See
+[billing.md](billing.md) for the preview/refine credit-metering model (M3, CLAUDE.md §7).
 
 On submit, `services/api/src/astel_api/producer.py` (`produce_artifacts`) builds a
 deterministic procedural `SplatCloud` seeded from the task id, writes it as `l3.ply`

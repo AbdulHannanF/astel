@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     # Swappable for an S3-backed store later via the ArtifactStore seam.
     artifact_dir: Path = Path("./.astel-artifacts")
 
+    # Generation Spec LLM stage (CLAUDE.md §4). Offline by default: the stage
+    # replays cached fixtures from ``llm_fixtures_dir`` and never spends. Going
+    # LIVE (real Anthropic calls, real spend) is the founder gate R-O2 -- it
+    # requires BOTH ``llm_live=True`` (ASTEL_LLM_LIVE) AND an ``ANTHROPIC_API_KEY``
+    # in the environment, so an API key present for other reasons can never
+    # silently trigger spend.
+    llm_live: bool = False
+    llm_fixtures_dir: Path = Path("./.astel-llm-fixtures")
+
 
 @lru_cache
 def get_settings() -> Settings:

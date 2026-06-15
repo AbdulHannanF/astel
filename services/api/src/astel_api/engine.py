@@ -45,8 +45,23 @@ _TICKS_PER_STAGE = 6
 class TaskEngine(Protocol):
     """Runs a generation and yields progress events until terminal state."""
 
-    def run(self, task_id: str) -> AsyncIterator[ProgressEvent]:
-        """Async-iterate progress events for ``task_id``."""
+    def run(
+        self,
+        task_id: str,
+        *,
+        produced: bool = True,
+        splats: int | None = None,
+        error: str | None = None,
+    ) -> AsyncIterator[ProgressEvent]:
+        """Async-iterate progress events for ``task_id``.
+
+        ``produced``/``splats``/``error`` reflect the REAL outcome of
+        ``produce_artifacts_dispatch`` for this task (audit §2.6/§2.7):
+        ``produced=False`` means production raised or wrote nothing, and the
+        engine must emit a terminal FAILED event rather than a fabricated
+        "Asset ready". When ``produced=True``, ``splats`` (if known) is the
+        real splat count to report in the terminal SUCCEEDED metrics.
+        """
         ...
 
 
@@ -58,8 +73,32 @@ class InProcessStubEngine:
         self._sim_speed = max(sim_speed, 0.001)
         self._rng = random.Random(seed)
 
-    async def run(self, task_id: str) -> AsyncIterator[ProgressEvent]:
+    async def run(
+        self,
+        task_id: str,
+        *,
+        produced: bool = True,
+        splats: int | None = None,
+        error: str | None = None,
+    ) -> AsyncIterator[ProgressEvent]:
         count = len(PIPELINE)
+
+        if not produced:
+            # Production failed or wrote zero artifacts: never claim "Asset
+            # ready" (audit §2.6/§2.7). A single terminal FAILED event, no
+            # simulated stage progress.
+            yield ProgressEvent(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                stage=None,
+                stage_label=None,
+                stage_index=0,
+                stage_count=count,
+                progress=0.0,
+                message=error or "Generation produced no artifacts",
+            )
+            return
+
         yield ProgressEvent(
             task_id=task_id,
             status=TaskStatus.RUNNING,
@@ -75,6 +114,10 @@ class InProcessStubEngine:
             async for event in self._run_stage(task_id, spec, index, count):
                 yield event
 
+        terminal_metrics = _STAGE_TARGETS[LayerStage.L3_REFINED]
+        if splats is not None:
+            terminal_metrics = terminal_metrics.model_copy(update={"splats": splats})
+
         yield ProgressEvent(
             task_id=task_id,
             status=TaskStatus.SUCCEEDED,
@@ -84,7 +127,7 @@ class InProcessStubEngine:
             stage_count=count,
             progress=1.0,
             message="Asset ready",
-            metrics=_STAGE_TARGETS[LayerStage.L3_REFINED],
+            metrics=terminal_metrics,
         )
 
     async def _run_stage(
@@ -220,7 +263,20 @@ class TemporalTaskEngine:
         self._sim_speed = max(sim_speed, 0.001)
         self._poll_interval = poll_interval
 
-    async def run(self, task_id: str) -> AsyncIterator[ProgressEvent]:
+    async def run(
+        self,
+        task_id: str,
+        *,
+        produced: bool = True,
+        splats: int | None = None,
+        error: str | None = None,
+    ) -> AsyncIterator[ProgressEvent]:
+        # produced/splats/error are part of the TaskEngine protocol (audit
+        # §2.6/§2.7) but are intentionally ignored here: the Temporal
+        # workflow tracks its own success/failure and metrics independently
+        # via the workflow's activity results, not the API-side synchronous
+        # dispatch in create_generation.
+        del produced, splats, error
         # Imported lazily so the default (stub) path never needs temporalio
         # at import time, and so `engine.py` stays importable offline.
         from temporalio.client import Client

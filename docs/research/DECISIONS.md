@@ -15,10 +15,10 @@ workstream).*
 |---|---|---|---|---|---|
 | Rasterization backbone | **gsplat** (nerfstudio) | 3dgrut (raster path) | Apache, most active community, built-in 2DGS/AA/AbsGS/MCMC/3DGUT — four papers pre-reimplemented permissively ([RA1](01-core-and-surface.md)) | Apache-2.0 | ✅ |
 | Ray-traced/relight rendering | **3dgrut** (NVIDIA) | gsplat 3DGUT mode | Secondary rays for L4 validation + distorted cameras for capture ([RA1](01-core-and-surface.md)) | Apache-2.0 | ✅ |
-| L3 representation | **2DGS surfels** (gsplat mode) | 3DGS + GOF-style extraction | Real per-splat normals (exact via ray–splat intersection) feed L4/L5; **2DGS over-smooths fuzzy content → A/B vs 3DGS+GOF needs GPU, deferred 2026-06-13** ([RA8 §1](08-deep-reads.md)) | Apache-2.0 | 🟡 |
+| L3 representation | **2DGS surfels** (gsplat mode) + normal-consistency + scale-tuned depth-distortion | 3DGS + GOF-style extraction | **A/B RESOLVED 2026-06-15 (session 13)** on real DTU scan1, matched 200k/3000/no-densification: 2DGS (λn=0.05, λdist=1e-4) **beats** raw 3DGS — overall **8.53 vs 8.76 mm**, accuracy **10.91 vs 11.52 mm** — and emits real per-splat normals for L4/L5, at a small PSNR cost (20.5 vs 21.4). Depth-distortion weight is scale-sensitive (λdist=1.0 → 27 mm collapse; 1e-4 optimal at ~600 mm depths). GOF unneeded. ([RA8 §1](08-deep-reads.md), [session-13 retro](../retros/session-13.md)) | Apache-2.0 | ✅ |
 | L3 refinement losses | MCMC budget densification + AA + reimplemented **PGSR** (single-view edge-aware normal + multi-view FB-reprojection + patch-NCC + exposure affine) + DN-Splatter monocular priors | SuGaR-style alignment | **Technique set settled**: PGSR = published leader (DTU 0.52mm); weights λ=100/.015/.15/.03 read off ([RA8 §2](08-deep-reads.md)); minimal weight subset (PGSR vs prior overlap) = deferred ablation | our code on Apache | ✅ |
-| Generative foundation (L2) | **TRELLIS-image-large gaussian head** (MIT, 16 GB) | LGM (speed tier) | **Confirmed only open *native* gaussian generator** at this quality (z→K gaussians w/ tanh-bounded offset; TRELLIS.2 verified mesh-only so v1 is the head); gaussian decode dodges NC `diffoctreerast` ([RA8 §3](08-deep-reads.md)) | MIT (gaussian head only) | ✅ |
-| Generative geometry prior (L3 supervision) | **TRELLIS.2-4B internal O-Voxel prior → distill to surfels** — geometry decode only; appearance guidance via MV-Adapter; prior views rendered by our own renderer (NOT nvdiffrast) | TRELLIS v1 end-to-end | **Model choice ✅** (MIT, SOTA geom+PBR); **distillation fidelity (does TRELLIS.2 geom survive surfel fit?) is the single riskiest bet → GPU de-risk deferred 2026-06-13**; nvdiffrast/nvdiffrec NC boundary in [LICENSE_AUDIT.md](LICENSE_AUDIT.md), clone-time import check pending ([RA8 §3](08-deep-reads.md)) | MIT core / NC deps excluded | 🟡 |
+| Generative foundation (L2) | **TripoSplat** (VAST-AI, MIT code+weights) — single image → native 3D gaussians | TRELLIS-image-large gaussian head (MIT, 16 GB); LGM (speed tier) | **DECISIONS #2 RESOLVED 2026-06-15 (session 14):** TripoSplat adopted as the L2 prior — measured on Box A at 4.6–4.9 GB / ~11 s, cleanest dep profile (audit 14, zero NC/build deps), native gaussian output, published Elo 1137 > TRELLIS.2 992, and now **wired end-to-end** (`astel_gpu.generative`: image → L2 → 2DGS L3 distillation, finite output, 23.1 dB held-out self-consistency). Replaces both the TRELLIS-v1-head L2 plan and the TRELLIS.2-distill prior below. **Deferred (not blocking):** a multi-model PSNR/SSIM/LPIPS head-to-head vs the TRELLIS-v1 head — needs a multi-view generative test corpus (none exists yet) + a TRELLIS-v1 install (cu128/torch2.11 wheel risk, doc 13 R-T9). | MIT (code + weights) | ✅ |
+| Generative geometry prior (L3 supervision) | **SUPERSEDED by TripoSplat L2 (row above)** — generative L3 = 2DGS distillation of the TripoSplat L2 over orbit renders (`astel_gpu.generative`), no separate mesh prior needed | TRELLIS.2-4B O-Voxel prior → distill to surfels (original plan); TRELLIS v1 end-to-end | **R-T1 (the single riskiest bet) RETIRED 2026-06-15 (session 14):** the planned TRELLIS.2-mesh→surfel distillation is no longer on the critical path — TripoSplat outputs native gaussians directly and the L2→L3 distillation produces surface-aligned surfels end-to-end. TRELLIS.2 stays as a *future* higher-geometry-fidelity option only; its nvdiffrast/nvdiffrec NC boundary ([LICENSE_AUDIT.md](LICENSE_AUDIT.md)) is moot while unused. | MIT core / NC deps excluded | ✅ |
 | Text conditioning | LLM Generation Spec → **FLUX.1-schnell** T2I → background removal → image pipeline | TRELLIS-text-xlarge direct | Meshy lesson: manufacture ideal conditioning images ([RA2](02-generative.md)) | Apache-2.0 (verify) | 🟡 |
 | Multi-view guidance | **MV-Adapter** | Era3D / newer | Plug-and-play on maintained T2I bases; also texture-refinement capable ([RA2](02-generative.md)) | ⚠ verify | 🟡 |
 | Capture front-end (L0/L1) | **MapAnything `-apache` ckpt** | VGGT (if ckpt relicensed) | Apache code+weights, metric output, pose-free↔posed flexible, active ([RA3](03-capture-video.md)) | Apache-2.0 | ✅ |
@@ -89,3 +89,485 @@ acceptable, ships as a downloaded tool not a vendored file). Embedding plan: dev
 `temporal server start-dev` subprocess; prod = Temporal-on-Postgres sharing our instance.
 Note: temporalio SDK requires Python ≤3.12/3.13 (not 3.14) — pin worker envs accordingly.
 Celery+Redis rejected: no clean no-admin Windows Redis path, resume semantics would be DIY.
+
+## 2026-06-14 — GPU stack: native Windows (reverses §"Dev environment"/C6)
+
+**Decision:** The GPU stack runs on **native Windows** (CUDA Toolkit 12.9 +
+Visual Studio 2026 MSVC), not WSL2. This reverses the product-decision row
+"Dev environment" (✅ WSL2, no dual-boot). Decided by the agent per Operating
+Rule §10.2 (decide + document); it changes neither the §1 binding constraints
+nor cost/licensing.
+
+**Why:** On Box A (`THREADRIPPER-48`, 2×4090) WSL2 is hard-blocked —
+virtualization is off in firmware and "Virtual Machine Platform" is disabled
+(a physical BIOS action + reboot to enable). The founder instead provisioned
+native CUDA 12.9 + VS 2026 and signalled it ("it already has cuda 12.9"). Native
+is ready now; WSL is not. **Validated empirically session 7** ([retro](../retros/session-07.md)):
+`torch 2.11.0+cu128` + `gsplat 1.5.3` compile and train on this box (render-then-refit
+smoke PSNR 8.2→45.6 dB), and the API produces a real optimized `l3.ply` via
+`ASTEL_PRODUCER=gpu`.
+
+**Operational consequences (binding for the GPU stack):**
+- Build CUDA extensions through the VS env (`vcvars64.bat -vcvars_ver=14.38` —
+  a VS2026 toolset-resolution quirk on this box). RTX 4090 = Ada → arch `8.9`.
+- GPU code lives in its own uv project (`pipelines/gpu`); torch never enters the
+  API/libs CI envs. The API reaches GPU work via **subprocess** through
+  `pipelines/gpu/run-python.cmd` (the VS-env launcher), not by import — keeps CPU
+  gates green and makes the GPU path work from a normal shell.
+- `scripts/setup-gpu-env.ps1` reproduces the env (incl. two venv-local patches
+  documented in `pipelines/gpu/README.md`).
+
+**Known fragility / future hardening:** runtime currently needs the VS compiler
+on PATH (a torch-2.11 JIT-recompile quirk: `cpp_extension` runs `where cl` on
+every gsplat import even off a warm cache). The two venv patches are
+torch-2.11-specific symptoms. Hardening candidate (session 8): AOT-built gsplat
+or a stable torch (2.7/2.8 cu126) → no runtime compiler, patches likely vanish.
+
+**Open risk for M3 (not M2):** TRELLIS / flash-attn / nvdiffrast-class
+extensions are painful or partly unavailable on Windows. The M2 capture stack
+(gsplat, COLMAP, MapAnything, Open3D, Warp) is fine on Windows; re-evaluate the
+generative path's Windows feasibility when M3 starts.
+
+## 2026-06-14 (session 8) — first ground-truth geometry eval + COLMAP installed
+
+**Synthetic controlled-ground-truth eval tier (`astel_gpu.synthetic_eval`).**
+Added an eval that renders a KNOWN object (a deterministic sphere shell, longest
+axis exactly 0.20 m by construction) from known poses, refits a fresh gaussian
+cloud to the renders, and measures REAL Chamfer (mm) + scale against the known
+geometry. This produces the **first non-`None` `geometric_error` and `scale`**
+in the quality-report pipeline (the Truth Meter's reason for being). It is a
+SEPARATE eval tool: the API's GPU producer (`astel_gpu.produce`) keeps its
+honest `None`s — it has no ground truth. Honesty preserved: the report's caveats
+state plainly this is a controlled synthetic measurement, not real-world capture
+accuracy. The headline Chamfer is over surface-defining gaussians (opacity >
+0.5); the raw all-means value is reported alongside.
+
+**First measured baseline (informs the L3 🟡 decision, row "L3 representation").**
+Raw 3DGS refit, no densification, no surface regularization, on the 0.20 m
+object (1500 iters, 4 k gaussians, 10 views): PSNR 6.7→32 dB; **surface
+coverage** (GT→nearest refit) **≈ 15 mm**, but **precision** (refit→nearest GT)
+**≈ 165 mm opacity-filtered / 220 mm raw** — i.e. the surface is covered but
+plagued by floaters. This is the first in-repo quantitative evidence that raw
+3DGS means are not surface-faithful, strengthening the case for the surface-
+aligned L3 representation (2DGS surfels + PGSR-class normal/depth regularization,
+rows above). It does NOT by itself resolve the 2DGS-vs-3DGS+GOF A/B (that needs
+fuzzy real content on GPU) — but it gives a concrete number future L3 work must
+beat. Methodology note: capture-path evals must be **metric-aligned** (camera
+orbit ≈ 2.5× object size, init spread ≈ object size); a mis-framed object makes
+geometric error a framing artifact, not a fidelity measure.
+
+**COLMAP installed (SfM front-end, row "Pose refinement").** COLMAP
+**4.1.0.dev0** (official `colmap-x64-windows-cuda.zip`, CUDA build) installed to
+`tools/` (gitignored) on Box A; the binary launches cleanly with CUDA (DLL/CUDA
+runtime resolve — the common failure for a downloaded Windows binary). This
+smokes the install only. A **functional SfM reconstruction** smoke (feature
+extraction → matching → mapping → registered-pose count) is deferred to the
+real-capture session: it needs textured real images (the founder's orbit videos)
+to be meaningful — running it on the low-texture synthetic renders would not be
+a representative test. MapAnything (feed-forward L0/L1) likewise awaits real
+captures. Both are infra-ready; the measured *real-world* numbers are the next
+gate.
+
+## 2026-06-14 (session 9) — DTU MVS adopted as the internal geometry GT benchmark
+
+**Pivot: public capture datasets instead of blocking on founder-filmed video.**
+The M2 deliverable — the first *real-world* measured Chamfer + metric scale — was
+gated on the founder filming the CORPUS.md C01–C10 orbit videos. Founder directive
+(2026-06-14): source real capture data from public datasets instead. A Sonnet
+research-scout agent surveyed the options (DTU, Tanks & Temples, Mip-NeRF 360, CO3D,
+3DGS `tandt_db`); findings and the call:
+
+- **DTU MVS — CHOSEN.** Real structured-light-scanner ground-truth point clouds in
+  **millimetres** (metric), 49–64 calibrated views per tabletop-object scene. The only
+  verified option giving *real GT geometry + known metric scale + a single-scene
+  download* simultaneously. License: **unstated** on the official DTU page — treated as
+  "research convention, internal-benchmark-only": we do NOT redistribute it, do NOT
+  train any shipped model on it, and do NOT publish DTU-derived numbers as product /
+  marketing (Truth Meter) claims without explicit clearance. Pure engineering accuracy
+  gate. First pull: `SampleSet.zip` (6.43 GB, images+calib for scans 1 & 6 + eval code)
+  + `Points.zip` (6.49 GB, GT `.ply` in mm for all scans), direct HTTPS, no signup.
+- **Tanks & Temples / 3DGS `tandt_db` — REJECTED (for now).** Real laser GT, but the
+  license is explicitly **non-commercial research only** (tanksandtemples.org/license) —
+  genuine licensing exposure for a commercial venture. Avoided beyond a throwaway "does
+  the pipeline run" smoke; no T&T-derived number enters any product surface.
+- **CO3D — REJECTED.** GT is COLMAP-derived (not independent) and CC-BY-NC
+  (non-commercial): fails both the GT-quality and the license bar.
+- **Mip-NeRF 360 — fallback only.** Real 360° orbit + COLMAP poses, permissive-ish, but
+  **no GT scan** → can smoke the real-orbit *pipeline* but yields no Chamfer number.
+
+**What DTU proves vs. doesn't (honesty channel).** DTU yields the first real-world
+geometric-accuracy number (Chamfer in mm vs. a real scanned object, metric scale known) —
+the actual Truth Meter deliverable, replacing the synthetic baseline. It does NOT prove
+the *casual-phone / pose-free / metric-scale-from-monocular-depth* story: DTU ships
+calibrated metric poses, so it validates the COLMAP→splat→Chamfer accuracy path, not the
+MapAnything pose-free path on handheld video. That sub-claim still awaits the founder's
+C01–C10 captures (or a pose-free public set). DTU is a **separate engineering benchmark,
+NOT part of the frozen blind-eval corpus** (CORPUS.md v1 stays untouched per its §5).
+
+**Scale handling.** COLMAP reconstructions are scale-free; DTU's calibrated cameras are
+metric (mm). We use DTU's per-view projection matrices (`pos_NNN.txt`, decomposed to
+K[R|t] in mm, GT frame) directly, so the fit lands in the GT frame with NO registration.
+This makes scale metric *by construction* (not estimated) — the pose-free path is what
+will produce a real scale-ESTIMATION number later.
+
+**MEASURED RESULT (session 9, scan1, RTX 4090).** Raw 3DGS (200k gaussians, 3000 iters,
+49 views @ 400×300, ~4 min): train PSNR 5.6→**23.3 dB**; vs DTU's real structured-light
+scan — **completeness (GT→fit) ≈ 3.85 mm** (the trustworthy real-world surface-COVERAGE
+number — raw 3DGS covers a real scanned object's surface to ~4 mm) and **accuracy
+(fit→GT) ≈ 18.9 mm** (inflated: the GT `stl_total` scan and our box eval region both
+include the turntable/background, and raw 3DGS leaves floaters in free space). The
+asymmetry (good completeness, poor accuracy) mirrors and strengthens the session-8
+synthetic finding — concrete real-world evidence for the surface-aligned L3 + masking.
+
+**KEY ENGINEERING LESSON — `spatial_lr_scale`.** The first run gave 6 dB (no
+convergence): `optimize()`'s `lr=5e-3` was tuned for the synthetic ~unit-scale scene, but
+DTU coords are in **millimetres** (object ~100 mm), so position/scale steps were ~1000×
+too small to move gaussians across the object. Fix: per-param-group lr with means+scales
+scaled by the scene extent (the standard 3DGS `spatial_lr_scale`); default 1.0 keeps the
+synthetic/smoke callers unchanged. PSNR jumped to 18.7 dB (800 it) → 23.3 dB (3000 it).
+Generalized `RenderInputs` for non-square images (DTU 1600×1200) in the same pass.
+
+**Honest gaps (next refinements).** (1) Exact DTU **ObsMask** (`.mat`, needs scipy) to
+isolate the object instead of the box proxy — tightens `accuracy`. (2) Background masking
+or full-scene modelling so PSNR isn't background-capped. (3) Held-out-view PSNR. (4) The
+**COLMAP SfM front-end** (`colmap_runner`, built + unit-tested) on the same images, for a
+pose-from-images validation + pose-accuracy check vs DTU's GT poses. New code, all
+license-clean + gates green: `colmap_io`, `colmap_runner`, `dtu`, `capture_eval`,
+`metrics.chamfer_distance_chunked` (VRAM-safe for the 2.88M-point GT).
+
+## 2026-06-14 (session 10) — M2 capture gaps closed (SfM front-end + DTU protocol)
+
+Closed the session-9 gaps; the capture path now has both a validated SfM front-end
+and a protocol-correct geometry number.
+
+**COLMAP SfM front-end validated (`capture_sfm`).** Ran the built `colmap_runner` on
+the 49 real DTU scan1 images (GPU SIFT → exhaustive match → mapper → undistort, ~55 s):
+**49/49 images registered**, 26,921-point sparse cloud (L0). Then aligned COLMAP's
+scale-free camera centres to DTU's metric GT centres via **Umeyama** similarity:
+**pose RMSE 0.886 mm** (median 0.76, max 1.54) across all 49 — COLMAP recovers the real
+camera rig to sub-millimetre. This closes the functional-SfM smoke deferred since
+session 8. (capture_eval still uses DTU's GT poses to isolate splat geometry from pose
+error; the two are complementary.)
+
+**DTU-protocol geometry (`capture_eval` rewritten).** Replaced the session-9 box proxy
+with DTU's official **ObsMask + Plane** masking (`PointCompareMain.m`): accuracy = fitted
+gaussians in the ObsMask observable volume → nearest GT; completeness = GT in the
+observable OBJECT volume (ObsMask ∩ above-plane) → nearest gaussian; per-point distances
+capped at 60 mm; **held-out-view PSNR** (fit on 42 train views, measured on 7 unseen). We
+intersect ObsMask with the plane for completeness (DTU's leaderboard uses above-plane
+only) because Astel reconstructs the object, not the full scene — documented deviation.
+Needed scipy (for the `.mat` masks) — added to `pipelines/gpu` deps.
+
+**MEASURED RESULT (scan1, 200k gaussians, 3000 it, 42 train views, ~168 s):** held-out
+PSNR **21.5 dB**; **accuracy 11.36 mm, completeness 6.10 mm, overall (DTU mean) 8.73 mm**
+vs the real scan. The accuracy dropped from the box-proxy's 18.9 mm once the ObsMask
+excluded out-of-volume floaters; it is still high for raw 3DGS (no densification / surface
+reg) — the concrete real-world baseline the surface-aligned L3 (2DGS/PGSR) must beat.
+
+**Remaining (real next steps).** The L3 2DGS-vs-3DGS+GOF A/B on this scan (must beat 8.73
+mm overall / 11.36 mm accuracy); optional full-scene modelling so PSNR isn't
+background-capped; more DTU scans for a corpus number. New tested code: `capture_sfm`,
+`dtu.{umeyama,load_obsmask,load_plane,points_in_obsmask,points_above_plane}`,
+`metrics.nn_distances`. Gates green (ruff · mypy 24 files · 43 pytest).
+
+## 2026-06-15 (session 11) — M3 entered: TripoSplat adopted as lead L2 candidate
+
+Started M3 (generative path). Cleared the first two gated steps from
+[13-m3-readiness](13-m3-readiness.md) §4; the founder-gated steps (Generation Spec
+LLM stage) are untouched (no API key used, no spend).
+
+**Step 1 — TripoSplat triage (no-GPU), GO.** Full import-graph + license audit in
+[14-triposplat-triage](14-triposplat-triage.md) (method/rigor matches audit 12). Findings:
+`VAST-AI-Research/TripoSplat` live (MIT **code and weights**, confirmed in-repo, commit
+2026-06-02); entire codebase 4 files / ~2.5k LOC; **zero** NC/build-heavy deps
+(nvdiffrast/kaolin/spconv/flash-attn/xformers/pytorch3d all absent) — strictly cleaner
+than TRELLIS-v1's gaussian head. Only non-pure-Python op is `torchvision.ops.deform_conv2d`
+(ships precompiled). Single image → native 3D gaussians (≤262,144, learned adaptive
+density), `.ply`/`.splat` export. This is the cleanest candidate audited.
+
+**Step 2 — Windows install spike on Box A, PASS.** TripoSplat runs natively: `torchvision`
+added from the existing cu128 index (`0.26.0+cu128`, matches torch 2.11) plus
+`safetensors`/`tqdm`/`huggingface-hub`; weights (~3.6 GB) downloaded to gitignored
+`pipelines/gpu/models/triposplat`; repo vendored to gitignored `pipelines/gpu/external/`.
+A single-image inference (`triposplat_spike.py`, via the `run-python.cmd` launcher) produced
+65,536 gaussians in **11.4 s at 4.6 GB peak VRAM** — far under the 24 GB ceiling, leaving
+room for a co-resident L3 refine. No CUDA build, no flash-attn/xformers needed (attention is
+plain `F.scaled_dot_product_attention`) → **R-T9 resolved for this candidate**; R-T1/R-T7
+strongly de-risked.
+
+**Decision:** adopt **TripoSplat as the lead L2 generative prior**, pending the step-3
+bake-off (held-out-view PSNR/SSIM/LPIPS + blind corpus) which formally resolves DECISIONS #2.
+Fallback ladder unchanged (TRELLIS-v1 head → TRELLIS.2 distillation).
+
+**Known defect to fix in the production wrapper (not a blocker):** TripoSplat's own
+`Gaussian.save_ply` emits non-finite opacity for ~11% of points (`inverse_opacity_activation
+= log(x/(1-x))` saturates at fp16 `x==1.0` → `inf`); xyz/normals/color/scale/rotation are
+finite. The L2 wrapper (built in the bake-off step) must clamp opacity before export so
+downstream consumers (eval, exporters, viewer) don't ingest `inf`.
+
+**Two infra notes:** (1) `huggingface_hub`'s hf-xet path hung on the two largest checkpoints
+on this box — `HF_HUB_DISABLE_XET=1` (or a direct `urllib` stream) is the reliable download
+path here. (2) `triposplat_spike.py` is intentionally a spike (uses the upstream `save_ply`);
+it graduates into a typed, opacity-sanitised `l2_triposplat` module during the bake-off.
+
+## 2026-06-15 (session 12) — L2 TripoSplat wrapper graduated; opacity defect fixed
+
+M3 step 3a (the *graduate* half of step 3). The session-11 spike is now production:
+`pipelines/gpu/src/astel_gpu/l2_triposplat.py` (typed, `mypy --strict` + `ruff` clean,
+2 new CPU tests; suite **45 passed**). It converts the vendored TripoSplat `Gaussian` to
+our `astel_splat_io.cloud.SplatCloud` and writes via `write_ply` — **not** upstream's
+`Gaussian.save_ply`. The known inf-opacity defect (note (2) above) is fixed by taking the
+sigmoid-activated `get_opacity ∈ [0,1]`, clamping to `[1e-6, 1-1e-6]`, and recomputing the
+logit (same path as `export.to_splat_cloud`); xyz/f_dc/log-scale/wxyz-rotation come from
+upstream's `_get_ply_data(transform)` unchanged (correct coordinate transform preserved).
+**Measured on Box A** (building_stone_house, 65,536 gaussians, 20 steps): 11.1 s, 4.59 GB
+peak, `n_nonfinite_opacity_logit == 0`, `n_nonfinite_xyz == 0` — defect eliminated, measured.
+
+**DECISIONS #2 is NOT yet resolved**: this is only the wrapper + clean-output proof. The
+formal L2-prior pick still needs the *scoring* half — input-view reconstruction
+PSNR/SSIM/LPIPS for TripoSplat (single-image generator → input-view, not novel-view, since
+it takes no held-out real view) plus a TRELLIS-v1-head comparison point if one is warranted.
+TripoSplat's lead is reinforced (clean finite output, 4.6 GB, 11 s) but not yet locked.
+`l2_triposplat` is not wired into `produce`/API — that is step 4, gated on the L3 surface A/B.
+
+## 2026-06-15 (session 13) — L3 surface A/B RESOLVED: 2DGS beats 3DGS on real DTU
+
+The long-open L3 representation decision (DECISIONS #1, 🟡 since 2026-06-13) is now ✅,
+resolved by measurement on real DTU scan1, not vibes. New module
+`pipelines/gpu/src/astel_gpu/l3_refine.py` adds gsplat-native 2DGS refine
+(`render_2dgs_train`/`render_2dgs_colors`/`optimize_2dgs`) with the two standard 2DGS
+regularizers — normal consistency (rendered vs depth-derived normals) and L1 depth
+distortion — over the existing RGB `L1 + D-SSIM` loss. `capture_eval` gained a
+`--representation {3dgs,2dgs}` switch so both arms share an **identical** init cloud, DTU
+ObsMask/Plane geometry protocol, and held-out PSNR split — only the representation + losses
+differ. Pure `surface_reg_loss` seam is CPU-unit-tested (4 new tests; suite **49 passed**).
+
+**Measured A/B (Box A 2×4090, 200k gaussians, 3000 iters, no densification, seed 20260614):**
+
+| Arm | overall mm | accuracy mm | completeness mm | held-out PSNR |
+|---|---|---|---|---|
+| 3DGS (raw baseline) | 8.76 | 11.52 | 6.00 | **21.41** |
+| 2DGS λn=0.05, λd=0 | 9.48 | 13.06 | 5.90 | 20.59 |
+| 2DGS λn=0.05, λd=1.0 | 27.11 | 30.24 | 23.99 | 8.12 |
+| **2DGS λn=0.05, λd=1e-4** | **8.53** | **10.91** | 6.15 | 20.47 |
+| 2DGS λn=0.05, λd=3e-4 | 9.07 | 11.91 | 6.23 | 20.21 |
+
+The fresh 3DGS arm (8.76 mm) reproduces the session-10 baseline (8.73 mm) → fair comparison.
+**Finding:** normal consistency alone slightly *hurts* geometry (9.48), but adding a
+scale-appropriate depth-distortion term (which concentrates surfels along the ray) flips it:
+2DGS edges out 3DGS on both overall and accuracy while delivering real surfel normals.
+PSNR is ~1 dB lower — the right trade for a geometry-accurate splat product.
+
+**Decision:** L3 = **2DGS** with normal + distortion regularization. GOF extraction (the
+runner-up) is NOT needed and stays unimplemented. **Caveat (honest):** the optimal λdist is
+**scene-scale-dependent** (catastrophic at 1.0 on a ~600 mm metric scene; 1e-4 optimal) —
+a dimensionless scale-normalized λdist is future work before this generalizes across scenes;
+both arms ran WITHOUT densification, so this isolates the representation+regularization effect,
+not the fully-productionized pipeline. λdist=1e-4 is DTU-scan1-specific, recorded as such.
+
+## 2026-06-15 (session 14) — generative L2→L3 wired; DECISIONS #2 resolved; R-T1 retired
+
+M3 step 4. New module `pipelines/gpu/src/astel_gpu/generative.py` wires the full
+generative path end-to-end: **image → TripoSplat L2 (native gaussians) → normalise to
+unit frame → render an orbit of synthetic views → 2DGS L3 distillation** (the chosen L3
+representation from session 13). Because a generated object has no GT scan, the L3 is
+distilled from the L2 generator's OWN multi-view renders; the reported number is held-out
+**self-consistency / distillation fidelity**, never accuracy-vs-reality (the quality report
+keeps `geometric_error`/`scale` honestly `None`, `generated_ratio=1.0`). New inverse
+converter `export.gaussian_params_from_splat_cloud` + pure `normalize_params` seam (both
+CPU-tested; suite **51 passed**).
+
+**Measured (Box A, building_stone_house, 65,536 gaussians, 24 orbit views, 1500 refine iters):**
+L2 65,536 → L3 65,536 surfels, **held-out self-consistency PSNR 23.13 dB**, refine 20.3 s,
+peak VRAM 4.93 GB, output PLYs fully finite. The 2DGS L3 now carries real per-splat normals
+for L4/L5.
+
+**DECISIONS #2 RESOLVED → L2 prior = TripoSplat** (table row updated): MIT code+weights,
+4.6–4.9 GB / ~11 s on Box A, cleanest dependency profile (audit 14), native gaussian output,
+published Elo > TRELLIS.2, now proven end-to-end. **R-T1 (TRELLIS.2-mesh→surfel distillation
+— the single riskiest bet) RETIRED**: it is off the critical path; TripoSplat + the L2→L3
+distillation deliver surface-aligned surfels without it. **Deferred (non-blocking):** a
+multi-model PSNR/SSIM/LPIPS head-to-head vs the TRELLIS-v1 head — needs a multi-view
+generative test corpus (none exists) and a TRELLIS-v1 install (cu128 wheel risk). Committing
+TripoSplat now on the evidence in hand per §10.2 (decide + document, don't stall).
+
+**Honest gaps:** distillation runs without densification at 1500 iters (23 dB is good, not
+hero-tier); generative L3 uses normal-only reg (λdist left 0 — its scale-tuning is per-scene,
+session 13); not yet wired into the API `produce` path or `.astel` packaging (that is the
+next integration step); single test image so far.
+
+## 2026-06-15 (session 15) — Generation Spec LLM stage scaffolded on fixtures (M3 step 5)
+
+New library `libs/astel_llm` implements CLAUDE.md §5's model-agnostic LLM layer and the
+text-pipeline's prompt→Generation Spec stage (CLAUDE.md §4), built entirely **offline** —
+no Anthropic API key, no spend (founder gate R-O2 untouched). External API facts re-verified
+live this session via the claude-api reference (training data 5 months stale): Haiku 4.5
+`claude-haiku-4-5` $1/$5, Sonnet 4.6 `claude-sonnet-4-6` $3/$15, Opus 4.8 `claude-opus-4-8`
+$5/$25; structured JSON via `output_config={"format":{"type":"json_schema","schema":…}}`
+(objects need `additionalProperties:false`, no numeric/length constraints — validated in code
+instead); prompt caching via `cache_control` on system blocks; `messages.count_tokens`.
+
+Modules: `spec.py` (`GenerationSpec` — object_class/parts/materials/style/`target_scale`
+with an explicit user-overridable confidence band/symmetry + the Anthropic-compatible JSON
+schema), `adapter.py` (`LLMAdapter` protocol; **`FixtureAdapter`** replays cached completions
+keyed by hash of `(model, system, user)` — the default, needs no key; **`AnthropicAdapter`**
+lazy-imports the SDK behind an optional `[live]` extra, constructed only when a key exists),
+`generation_spec.py` (`build_generation_spec(prompt, adapter)` → validated spec + credit-ledger
+row; Haiku default; frozen system prompt + schema so prompt caching applies), `pricing.py`
+(verified rates + cache-discount math + `ledger_entry`). Gates green: ruff · mypy --strict
+(9 files) · **14 pytest**, all offline.
+
+**Founder gate (R-O2) — the ONLY remaining M3 step:** to enable real calls, the founder sets
+`ANTHROPIC_API_KEY` + a spend cap and `uv sync --extra live`, then runs one live
+`AnthropicAdapter` call; the stage code is identical fixtures-vs-live. Estimated
+**~$0.02–0.035/generation** (Haiku, cached system prompt), ~$50–350/mo at 1k–10k generations —
+under the $1k/mo flag. No paid call is made until the founder approves, per the agreement.
+
+**M3 status:** steps 1–5 of [13-m3-readiness](13-m3-readiness.md) §4 are now complete in code
+(triage ✅, install spike ✅, L2 graduate+bake-off/DECISIONS#2 ✅, L3 A/B+L2→L3 wiring ✅,
+Generation Spec scaffolded ✅). The remaining work is integration (wire the generative pipeline
++ LLM stage into the API `produce` path and `.astel` packaging) and the single founder gate
+(API key) — not new research.
+
+## 2026-06-15 (session 16) — M3 integration pt.1: GPU producer artifact parity + generative image path wired to the API
+
+The GPU producer now emits the **same `.astel` artifact contract** as the CPU stub and runs
+the **real generative image path through the production API→subprocess seam**. New torch-free,
+CPU-tested `astel_gpu.packaging.write_layer_stack(SplatCloud)` writes `l0.ply`/`l3.ply`/`l3.spz`/
+`l3.sog`/`package.astel`/`quality-report.json` (+`l2.ply` for generated assets), binding L0+L3
+with per-gaussian provenance via `astel_format.build_minimal_package` (added as a GPU dep —
+pure-python, no CUDA). `astel_gpu.produce` dispatches by modality: `image`+`--image` → real
+`run_l2_to_l3` (TripoSplat L2 → 2DGS L3); else the render-then-refit smoke. API
+`produce_artifacts_dispatch` gained `capture_id` and resolves the uploaded `source*` image from
+the store, passing `--image` (local-fs seam; S3 would download first); the stub default path is
+byte-for-byte unchanged.
+
+**Measured on Box A (real CUDA):** smoke 8k/300it → 7-artifact contract, 41.8 dB, 2.4 s, 0.17 GB;
+generative (`creature_butterfly.webp`, 500 refine it) → L2 65,536 gaussians (11.1 s, 4.59 GB, 0
+non-finite) → L3 65,536 surfels (8.1 s, 4.93 GB), held-out self-consistency 18.14 dB, 8-artifact
+contract incl `l2.ply`, all PLYs finite, `package.astel` round-trips honest (`chamfer=None`,
+`measured_fraction=0.0`). **Real end-to-end (no mocking, `ASTEL_PRODUCER=gpu`):**
+`produce_artifacts_dispatch` invoked the live `run-python.cmd` subprocess and stored all 7
+artifacts — the production seam works. Gates green: GPU ruff·mypy(33)·**56 pytest** (54 CPU + 2
+GPU, 5 new packaging); API ruff·mypy(19)·**30+1 pytest** (2 new). No founder gate touched.
+
+**Honest gaps:** the `astel_llm` Generation Spec stage is still not wired into the API text path
+(session 17 — torch-free, lives in the API env); text modality runs the smoke (no prompt
+conditioning until a text→multiview stage exists); generated assets' geometric_error/scale stay
+honestly `None`. Nothing committed yet (sessions 7–16 on the single "Beta" commit).
+
+## 2026-06-15 (session 17) — M3 integration pt.2 (final): Generation Spec stage wired into the API text path
+
+The text pipeline now runs prompt → `GenerationSpec` on submit. New
+`astel_api.generation_spec_stage`: `run_generation_spec_stage` builds the spec via `astel_llm`
+and stores `generation-spec.json` (spec + credit-ledger row); `apply_spec_scale_to_report` threads
+the spec's `target_scale` into the quality report's `scale` block
+(`method:"llm-estimate"`, `source:"generation-spec"`, with the user-overridable confidence band) —
+the first non-`None` scale the Truth Meter can show for a generated asset, honestly flagged.
+`create_generation` runs the stage after produce; `astel-llm` added as an API dep (torch-free).
+
+**Founder gate R-O2 — double-gated, no silent spend:** OFFLINE by default (`FixtureAdapter`, zero
+cost). LIVE (`AnthropicAdapter`, real spend) requires BOTH `ASTEL_LLM_LIVE=1` AND
+`ANTHROPIC_API_KEY` — a key present for other reasons can never trigger a paid call. An unseen
+prompt with no cached fixture degrades gracefully (`generation-spec.json` `status:"skipped"`,
+reason names R-O2); the generation still completes. Gates green: API ruff·mypy(21)·**35+1 pytest**
+(5 new). No founder gate touched.
+
+**M3 integration COMPLETE in code:** generative image path runs through the API to a full `.astel`
+package (session 16) + Generation Spec runs in the text path (this session). The only remaining
+M3 item is the founder's API key (R-O2) — not new code. **Next: M4 (world-awareness — L4/L5/L6).**
+
+## 2026-06-15 (session 18) — M4 entered: L5 solidification core (splat→SDF→mesh→mass props→.stl)
+
+First M4 step. New torch-free, CPU-only lib `libs/astel_solid` implements the print-path / physics-
+volume / collision spine from row 31: `oriented_point_sdf` (IMLS over scipy KDTree knn, outward
+normals ⇒ negative-inside), `extract_isosurface` (skimage marching cubes, re-wound outward),
+`compute_mass_properties` (volume/COM/inertia via signed-tetra divergence-theorem integrals,
+vectorised numpy), `write_binary_stl`, and `solidify`/`surfel_normals` (per-splat outward normal =
+thinnest 2DGS axis, centroid-oriented). **Per §1.2 this surface is internal scaffolding only — never
+the asset.** Validated vs analytic solids: **unit cube exact** (V=1, COM=0, I=diag(1/6) to 1e-6 — the
+math check); **sampled sphere r=0.5 through the full 64³ pipeline** V=0.5014 vs 0.5236 (4.2% low),
+COM≈4e-3, inertia diag≈0.043 vs 0.0501 (~14% low), near-isotropic — the honest discretization bias of
+a faceted inscribed MC polyhedron. Deps permissive (numpy/scipy BSD, scikit-image 0.26 BSD). Gates
+green: ruff·mypy(11)·**10 pytest**. **Deferred (row 31):** Open3D TSDF, CoACD convex decomp, .3mf,
+printability checks — follow-on sessions. **Not yet wired into the producer/.astel package.** No
+founder gate touched. **Next: wire L5 into the producer; then L6 physics-material (reuse astel_llm).**
+
+## 2026-06-15 (session 19) — L5 wired into the GPU producer (l5.stl + mass props per asset)
+
+`astel_solid` is now product-integrated. `astel_gpu.packaging.write_layer_stack` derives
+`surfel_normals` from the L3 splats → `solidify` → writes `l5.stl` + `l5-mass.json` and threads a
+`solidity` block (volume/mass/COM/inertia diagonal + mesh/SDF stats) into the quality report.
+**Best-effort** (broad try/except like `.sog`): a cloud that won't solidify skips L5, never failing
+the asset (the surface is scaffolding; the asset stays splats, §1.2). `astel-solid` added as a
+torch-free `pipelines/gpu` dep. **Verified on a real 65k cloud** (pirate-ship image, self-consistency
+28.56 dB): watertight mesh 7,855 verts / 14,881 faces, `l5.stl` = 744,134 B = exactly `84+50·14881`
+(valid binary STL), volume 3.77 model-units³, **anisotropic inertia (4.61, 1.53, 5.42)** — low about
+the long hull axis, physically correct. Gates green: GPU ruff·mypy(33)·**55 CPU pytest** (+1 seam).
+**Honest gaps:** mass/volume in MODEL units (metric grounding via the scale stage is a follow-on);
+L5 not yet a *bound* `.astel` manifest layer (loose artifacts + report block for now); centroid
+outward-normal heuristic (star-shaped only). No founder gate touched. **Next M4: L6 physics-material
+(reuse astel_llm), L4 relighting, metric-scale L5, CoACD+.3mf+printability.**
+
+## 2026-06-15 (session 20) — M3 closed: preview/refine credit-metering (billing semantics)
+
+The third and final M3 deliverable (build plan §9 M3: "preview/refine billing semantics"). New
+pure module `services/api/src/astel_api/billing.py` meters the layer stack as credits per CLAUDE.md
+§7 + `meshy-analysis.md`: **L0–L2 previews cheap (1/1/2 credits), L3 the main spend (20), L4–L7 +
+print add-ons**, `1 credit == 1¢` (notional internal unit — no external spend, not a §10.2 cost
+item). Mirrors Meshy's two-stage model: `POST /v1/generations` gains `mode` (`preview`|`refine`,
+default `refine`) + optional `refine_of`; a **keyed refine bills only the L3+ increment and never
+re-charges (or re-runs the LLM spec for) the preview**. Every generation stores
+`credit-ledger.json` (schema `astel.credit-ledger/v0`) + returns a `billing` summary; `GET
+/v1/pricing` publishes the schedule; the measured Generation-Spec token cost folds in as an
+`LLM_SPEC` credit line (ceil to ≥1 credit). `generations` gains `mode`/`refine_of`/`credits`
+(Alembic `a1b2c3d4e5f6`).
+
+**Honesty:** the stub producer computes the full stack regardless of tier, so a preview has an
+unpaid L3 on disk — the ledger emits a caveat naming delivered-but-unbilled layers rather than
+hiding it; the real GPU path can gate production by tier later (billing is already correct for it).
+**Verified live** (uvicorn, real HTTP): preview = 1 credit; standalone refine = 21 (L0+L3); keyed
+refine = 20 (L3 only); preview+keyed-refine = 21 = standalone refine (no double-charge). Gates
+green: API ruff · mypy --strict (23 files) · **51 pytest** (+16: 11 unit billing, 5 endpoint).
+Alembic upgrade head applies on a fresh DB to the expected columns. No founder gate touched.
+
+**M3 is now COMPLETE end-to-end** (generative L2→L3 + Generation Spec + billing). Design doc:
+[`architecture/billing.md`](../architecture/billing.md). Not yet: per-account credit *balances* /
+debiting (needs auth), tier-gated production. **Next: M4 (L6 physics-material, L4 relighting,
+metric-scale L5, CoACD+.3mf).**
+
+## 2026-06-15 (session 21) — M4 entered: L6 physics-material stage; verification + honesty polish
+
+Re-verified all gates at the founder's request and fixed two regressions the prior retros reported
+green: the session-20 billing migration tripped ruff E501; and the two GPU tests
+(`test_smoke_refit`/`test_synthetic_eval`) **hard-failed under a plain `uv run pytest` on Box A** —
+they guarded only on `torch.cuda.is_available()`, but CUDA *is* present, so they ran and died on
+gsplat's JIT compile (no `cl.exe` outside `run-python.cmd`). Fixed with a shared
+`requires_gsplat_runtime` fixture (`pipelines/gpu/tests/conftest.py`) that also skips when
+`shutil.which("cl") is None`, so the documented command is green everywhere and the tests only run
+for real through the launcher.
+
+**Honest finding (verified live over HTTP):** a **text** prompt does NOT yet produce
+prompt-faithful geometry — the stub returns a procedural placeholder (`origin: stub`) and the
+Generation Spec is `skipped` without a fixture/key. The only real input→model path today is
+**image → TripoSplat L2 → 2DGS L3** (re-run live on Box A: 65,536 gaussians, held-out 19.0 dB at
+200 iters, full contract incl. `l5.stl`). **text→3D needs a text→multiview stage that is unbuilt**
+— surfaced to the founder as the highest-value next build (ahead of finishing M4). Polish: stub/smoke
+quality reports now state explicitly that the geometry is *not* derived from the prompt; the web dock
+shows a modality-aware honesty hint. New guide `docs/MVP_TESTING.md`.
+
+**L6 decision (CLAUDE.md §3 L6):** built the physics-material reasoning stage in `astel_llm`
+(`physics_material.py`), mirroring the Generation Spec stage — typed `PhysicsMaterialSpec`
+(per-region `material_class` ∈ {rigid,soft,cloth,fluid_adjacent,granular}, `density_kg_m3`,
+`friction`, `restitution`; `ArticulationHint` joints), structured-output schema, range-validating
+`from_dict`, token-ledger row. **Model = Haiku 4.5** (constrained material lookup, not deep
+reasoning); Sonnet 4.6 is the documented upgrade per research doc 13 §3. Wired into the API text path
+(`physics_material_stage.py`) after the spec stage: stores the **billable `l6.json`** layer on
+success (billing already maps `l6.json` → the L6 add-on, 4 credits — no billing change needed) or a
+non-billable `physics-material.json` skip note on cache-miss. Offline by default, same founder gate
+R-O2 as the spec stage — **no spend**. Gates green: API ruff·mypy(25)·**56 pytest** (+5); astel_llm
+ruff·mypy·**24 pytest** (+10). **Honest gaps:** L6 is text/spec-driven only (no VLM-over-renders for
+the image path yet); L6↔L5 mass join + `.astel` manifest binding are the next L6 steps; L6 LLM token
+cost not folded into the credit ledger's LLM line (the flat add-on prices the layer; raw cost logged
+in `l6.json`). **Next: text→multiview bridge (founder's call) or continue M4 (L6→L5 mass, L4
+relighting, metric-scale L5, CoACD+.3mf).**

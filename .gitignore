@@ -29,6 +29,19 @@ dist/
 data/
 artifacts/
 checkpoints/
+
+# Third-party tool binaries downloaded to the box (e.g. COLMAP) — never in git;
+# install path is documented in docs/setup/gpu-boxes.md
+tools/
+
+# GPU pipeline generated outputs (metrics/plys from smoke + produce + eval runs)
+pipelines/gpu/out/
+pipelines/gpu/out*/
+pipelines/gpu/dtu_run.log
+
+# GPU pipeline third-party code clones + downloaded model weights (never in git)
+pipelines/gpu/external/
+pipelines/gpu/models/
 *.ply
 *.spz
 *.sog

@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerationState } from "../hooks/useGeneration.ts";
 import { GenerationDock } from "./GenerationDock.tsx";
 
-const IDLE: GenerationState = { phase: "idle", last: null, error: null };
+const IDLE: GenerationState = {
+  phase: "idle",
+  last: null,
+  error: null,
+  conditioning: null,
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -91,5 +96,59 @@ describe("GenerationDock capture upload", () => {
 
     expect(start).toHaveBeenCalledWith("text", "a brass astrolabe");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GenerationDock progress rail", () => {
+  it("shows an error, not 'Asset ready', when the SSE stream reports failure", () => {
+    const failedState: GenerationState = {
+      phase: "error",
+      last: {
+        task_id: "t1",
+        status: "failed",
+        stage: null,
+        stage_label: null,
+        stage_index: 0,
+        stage_count: 4,
+        progress: 0,
+        message: "simulated CUDA OOM",
+        metrics: null,
+      },
+      error: "simulated CUDA OOM",
+      conditioning: "none",
+    };
+
+    render(
+      <GenerationDock state={failedState} start={vi.fn()} cancel={vi.fn()} />,
+    );
+
+    expect(screen.getByText("simulated CUDA OOM")).toBeInTheDocument();
+    expect(screen.queryByText("Asset ready")).not.toBeInTheDocument();
+  });
+
+  it("reports the real terminal splat count, not a fabricated one", () => {
+    const doneState: GenerationState = {
+      phase: "done",
+      last: {
+        task_id: "t1",
+        status: "succeeded",
+        stage: "L3_REFINED",
+        stage_label: "Complete",
+        stage_index: 4,
+        stage_count: 4,
+        progress: 1,
+        message: "Asset ready",
+        metrics: { splats: 8000 },
+      },
+      error: null,
+      conditioning: "image",
+    };
+
+    render(
+      <GenerationDock state={doneState} start={vi.fn()} cancel={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Asset ready")).toBeInTheDocument();
+    expect(screen.getByText(/8k splats/)).toBeInTheDocument();
   });
 });

@@ -34,6 +34,33 @@ const PLACEHOLDER: Record<Modality, string> = {
   video: "Drop an orbit clip to capture a real object",
 };
 
+// Honest, modality-aware note on what actually runs today (M3). Text has no
+// geometry generator yet (text→multiview is unbuilt), so it returns a
+// placeholder preview + a structured spec; the live generative path is image
+// input → TripoSplat. Surfaced up-front so the demo never over-promises.
+const HINT: Record<Modality, React.JSX.Element> = {
+  text: (
+    <>
+      Text returns a <b>placeholder preview + structured spec</b> today —
+      prompt-faithful geometry isn’t wired yet. For a real generated model,
+      drop an <b>image</b> (the live TripoSplat → 2DGS pipeline).
+    </>
+  ),
+  image: (
+    <>
+      A single image runs the <b>live generative pipeline</b> (TripoSplat L2 →
+      2DGS L3). Requires the GPU producer; on CPU you get the placeholder
+      preview.
+    </>
+  ),
+  video: (
+    <>
+      Video capture (orbit → 4DGS) is on the <b>M6</b> roadmap and not wired
+      yet — uploads are stored but produce the placeholder preview.
+    </>
+  ),
+};
+
 export function GenerationDock({
   state,
   start,
@@ -188,7 +215,9 @@ export function GenerationDock({
           {!busy && <ArrowIcon />}
         </button>
 
-        {state.phase !== "idle" && (
+        {state.phase === "idle" ? (
+          <p className="dock__hint">{HINT[modality]}</p>
+        ) : (
           <ProgressRail
             last={state.last}
             phase={state.phase}

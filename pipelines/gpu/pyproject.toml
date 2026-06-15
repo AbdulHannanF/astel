@@ -1,0 +1,90 @@
+[project]
+name = "astel-gpu"
+version = "0.1.0"
+description = "Astel GPU pipeline: gsplat-backed differentiable rendering and refinement (M2+)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "torch",
+    "gsplat",
+    "astel-splat-io",
+    "astel-format",
+    "astel-solid",
+    "torchvision>=0.26.0",
+    "safetensors>=0.8.0",
+    "tqdm>=4.68.2",
+    "huggingface-hub>=1.19.0",
+    "diffusers>=0.38.0",
+    "transformers>=5.12.0",
+    "accelerate>=1.14.0",
+    "sentencepiece>=0.2.1",
+    "protobuf>=7.35.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/astel_gpu"]
+
+[tool.uv.sources]
+astel-splat-io = { path = "../../libs/astel_splat_io", editable = true }
+astel-format = { path = "../../libs/astel_format", editable = true }
+astel-solid = { path = "../../libs/astel_solid", editable = true }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources.torch]
+index = "pytorch-cu128"
+
+[tool.uv.sources.torchvision]
+index = "pytorch-cu128"
+
+[project.scripts]
+astel-gpu-smoke = "astel_gpu.smoke_refit:main"
+astel-gpu-produce = "astel_gpu.produce:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = [
+    "numpy.*",
+    "scipy.*",
+    "gsplat.*",
+    "torch.*",
+    "astel_splat_io.*",
+    "astel_format",
+    "astel_format.*",
+    "astel_solid",
+    "astel_solid.*",
+    "triposplat",  # vendored MIT repo, path-injected at runtime (external/TripoSplat)
+    "triposplat.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

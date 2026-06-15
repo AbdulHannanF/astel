@@ -37,6 +37,25 @@ class Generation(Base):
     # Optional link to a prior /v1/captures upload (image/video bytes). Null for
     # text generations and any submit that did not reference a capture.
     capture_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Billing tier (CLAUDE.md §7): "preview" (cheap L0–L2) or "refine" (full).
+    mode: Mapped[str] = mapped_column(String(16), default="refine")
+    # When this is a follow-up refine, the prior preview task id (else null).
+    refine_of: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Total credits billed for this generation (the credit-ledger.json total).
+    credits: Mapped[float | None] = mapped_column(nullable=True)
+    # Whether produce_artifacts_dispatch actually produced artifacts for this
+    # task (vs. raising). The SSE engine must never claim "Asset ready" when
+    # this is False (audit §2.6/§2.7) — see engine.InProcessStubEngine.run.
+    produced: Mapped[bool] = mapped_column(default=False)
+    # Real splat count from the producer's result dict (None if production
+    # failed or never reported a count).
+    splats: Mapped[int | None] = mapped_column(nullable=True)
+    # str(exc) from produce_artifacts_dispatch on failure, else None.
+    production_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # What the L3 geometry was actually conditioned on for this task: "prompt"
+    # | "image" | "video" | "none" (audit recommendation #2). "none" means a
+    # prompt/capture-independent placeholder was produced.
+    conditioning: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(
         default=lambda: dt.datetime.now(dt.UTC)
     )

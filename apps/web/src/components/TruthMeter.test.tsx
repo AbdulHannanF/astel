@@ -50,6 +50,20 @@ describe("TruthMeter", () => {
     expect(screen.queryByText("STUB")).not.toBeInTheDocument();
   });
 
+  it("shows an honest placeholder pill when conditioning is 'none'", () => {
+    render(
+      <TruthMeter report={REPORT} errored={false} conditioning="none" />,
+    );
+    expect(screen.getByText(/not from your input/i)).toBeInTheDocument();
+  });
+
+  it("does not show the placeholder pill when conditioning is real input", () => {
+    render(
+      <TruthMeter report={REPORT} errored={false} conditioning="image" />,
+    );
+    expect(screen.queryByText(/not from your input/i)).not.toBeInTheDocument();
+  });
+
   it("shows a STUB pill and caveat for a non-measured API report", () => {
     const api: ApiQualityReport = {
       schema: "astel.quality-report/v0",

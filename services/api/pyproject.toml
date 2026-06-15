@@ -16,6 +16,7 @@ dependencies = [
     "temporalio>=1.28.0",
     "astel-splat-io",
     "astel-format",
+    "astel-llm",
     "alembic>=1.18.4",
 ]
 
@@ -43,7 +44,7 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["astel_splat_io.*", "astel_format.*"]
+module = ["astel_splat_io.*", "astel_format.*", "astel_llm.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -57,3 +58,4 @@ package = false
 [tool.uv.sources]
 astel-splat-io = { path = "../../libs/astel_splat_io", editable = true }
 astel-format = { path = "../../libs/astel_format", editable = true }
+astel-llm = { path = "../../libs/astel_llm", editable = true }

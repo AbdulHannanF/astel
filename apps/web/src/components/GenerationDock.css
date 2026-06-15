@@ -130,6 +130,19 @@
   cursor: not-allowed;
 }
 
+/* Honesty hint — what this modality actually produces today */
+.dock__hint {
+  grid-column: 1 / -1;
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--text-lo);
+  line-height: 1.4;
+}
+.dock__hint b {
+  color: var(--text-hi);
+  font-weight: 600;
+}
+
 /* Progress rail */
 .rail-progress {
   grid-column: 1 / -1;

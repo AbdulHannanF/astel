@@ -104,7 +104,11 @@ export function App(): React.JSX.Element {
               visible={visibleLayers}
               onToggle={toggleLayer}
             />
-            <TruthMeter report={report} errored={reportError} />
+            <TruthMeter
+              report={report}
+              errored={reportError}
+              conditioning={state.conditioning}
+            />
           </div>
         </aside>
       </div>
