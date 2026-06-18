@@ -10,6 +10,8 @@ pipeline (M2+). It writes a real, per-task layer stack into the
   the cheap preview tier (CLAUDE.md §3 L0).
 * ``l3.spz`` / ``l3.sog`` — compressed-delivery exports of the L3 cloud
   (Niantic SPZ v3 and PlayCanvas SOG, both via ``astel_splat_io``).
+* ``l3.glb`` — KHR_gaussian_splatting glTF (RC) export of the L3 cloud, the
+  broadly-interoperable interop artifact (via ``astel_splat_io.gltf``).
 * ``package.astel`` — a real, schema-valid ``.astel`` package assembled by
   ``astel_format.build_minimal_package`` binding L0 + L3 with a per-gaussian
   provenance channel and an honest :class:`QualityReport`.
@@ -26,6 +28,7 @@ fields are explicit placeholders (the dict) or explicit ``None`` + a ``reason``
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 from datetime import UTC, datetime
 from hashlib import blake2b
@@ -41,12 +44,15 @@ from astel_format.models import (
     ScaleConfidence,
 )
 from astel_splat_io.cloud import SplatCloud
+from astel_splat_io.gltf import write_gltf
 from astel_splat_io.ply import write_ply
 from astel_splat_io.sog import write_sog
 from astel_splat_io.spz import write_spz
 
 from . import __version__
 from .storage import ArtifactStore
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_COUNT: int = 48_000
 
@@ -281,8 +287,9 @@ def build_package_quality_report(*, modality: str) -> QualityReport:
             measured_fraction=0.0,
             generated_fraction=1.0,
         ),
+        origin="stub",
         caveats=[
-            f"origin=stub; modality={modality}. Procedurally generated, not "
+            f"Stub pipeline; modality={modality}. Procedurally generated, not "
             "reconstructed: the geometry is a prompt-independent placeholder "
             "seeded from the task id, not a model of the prompt. All quality "
             "metrics are unmeasured (null) by design until the GPU "
@@ -291,13 +298,72 @@ def build_package_quality_report(*, modality: str) -> QualityReport:
     )
 
 
+def _write_appearance(
+    cloud: SplatCloud,
+    tmp_path: Path,
+    task_id: str,
+    store: ArtifactStore,
+    artifacts: list[str],
+) -> tuple[Path, Path, Path, dict[str, Any]] | None:
+    """Best-effort L4: decompose the stub colour into albedo + an SH env.
+
+    CPU-pure (torch-free) so the no-GPU demo asset relights. Writes/stores
+    ``l4-albedo.ply`` (un-lit base colour), ``l4-env.json`` (estimated
+    illumination), ``l4.json`` (summary) and ``l4-relight.json`` (web studio
+    preview). Returns ``(env_path, albedo_path, summary_path, summary)`` or
+    ``None`` — L4 must never fail an asset (the asset stays splats).
+    """
+    try:
+        from astel_appearance import build_appearance
+
+        art = build_appearance(
+            cloud.positions,
+            cloud.colors_dc,
+            cloud.quats,
+            cloud.log_scales,
+            cloud.opacity,
+        )
+        albedo_cloud = SplatCloud(
+            positions=cloud.positions,
+            colors_dc=art.albedo_colors_dc.astype(np.float32),
+            opacity=cloud.opacity,
+            log_scales=cloud.log_scales,
+            quats=cloud.quats,
+        )
+        albedo_ply = tmp_path / "l4-albedo.ply"
+        write_ply(albedo_cloud, albedo_ply)
+        store.put(task_id, "l4-albedo.ply", albedo_ply.read_bytes())
+        artifacts.append("l4-albedo.ply")
+
+        env_path = tmp_path / "l4-env.json"
+        env_path.write_text(json.dumps(art.env, indent=2))
+        store.put(task_id, "l4-env.json", env_path.read_bytes())
+        artifacts.append("l4-env.json")
+
+        summary_path = tmp_path / "l4.json"
+        summary_path.write_text(json.dumps(art.summary, indent=2))
+        store.put(task_id, "l4.json", summary_path.read_bytes())
+        artifacts.append("l4.json")
+
+        relight_path = tmp_path / "l4-relight.json"
+        relight_path.write_text(json.dumps(art.relight_preview))
+        store.put(task_id, "l4-relight.json", relight_path.read_bytes())
+        artifacts.append("l4-relight.json")
+
+        return env_path, albedo_ply, summary_path, art.summary
+    except Exception:
+        logger.exception("L4 appearance failed (best-effort); skipping l4 artifacts")
+        return None
+
+
 def produce_artifacts(
     task_id: str, modality: str, prompt: str, store: ArtifactStore
 ) -> dict[str, Any]:
-    """Generate and store the L0/L3 splat layer stack for ``task_id``.
+    """Generate and store the L0/L3/L4 splat layer stack for ``task_id``.
 
-    Writes ``l0.ply``, ``l3.ply``, ``l3.spz``, ``l3.sog``, ``package.astel``,
-    and ``quality-report.json`` into ``store``. Returns
+    Writes ``l0.ply``, ``l3.ply``, ``l3.spz``, ``l3.sog``, the L4 appearance set
+    (``l4-albedo.ply``, ``l4-env.json``, ``l4.json``, ``l4-relight.json``),
+    ``package.astel`` and ``quality-report.json`` into ``store``. Returns
     ``{"splats": <l3 count>, "seed_splats": <l0 count>, "artifacts": [...]}``.
     """
     seed = stable_seed(task_id)
@@ -305,6 +371,8 @@ def produce_artifacts(
     l0 = seed_cloud(cloud)
 
     artifacts: list[str] = []
+
+    appearance_summary: dict[str, Any] | None = None
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -318,6 +386,14 @@ def produce_artifacts(
         write_ply(l0, l0_ply)
         store.put(task_id, "l0.ply", l0_ply.read_bytes())
         artifacts.append("l0.ply")
+
+        # L4 appearance (CLAUDE.md §3 L4): the decomposition is CPU-pure
+        # (torch-free), so even the stub asset relights — split the baked
+        # procedural colour into albedo + an estimated SH environment. This is a
+        # *real* operation on the stub geometry (not a measured object); the L4
+        # summary inherits the stub's honesty caveats via the quality report.
+        l4_paths = _write_appearance(cloud, tmp_path, task_id, store, artifacts)
+        appearance_summary = l4_paths[3] if l4_paths else None
 
         # Compressed-delivery exports of the L3 cloud. SPZ is byte-exact to its
         # spec; SOG is best-effort (uniform-quantile codebooks, no spatial sort
@@ -333,10 +409,22 @@ def produce_artifacts(
         store.put(task_id, "l3.sog", l3_sog.read_bytes())
         artifacts.append("l3.sog")
 
-        # Full .astel package binding L0 + L3 with per-gaussian provenance.
-        # Every primitive is fully generated (provenance = 0.0 == "generated",
-        # per the manifest convention "1=measured, 0=generated"), matching the
-        # honest 0%-measured hallucination report.
+        # KHR_gaussian_splatting glTF (RC) — the broadly-interoperable interop
+        # export. Same 3DGS frame as the .ply master (only the quaternion order
+        # differs); see astel_splat_io.gltf for the coordinate convention.
+        l3_glb = tmp_path / "l3.glb"
+        write_gltf(cloud, l3_glb)
+        store.put(task_id, "l3.glb", l3_glb.read_bytes())
+        artifacts.append("l3.glb")
+
+        l4_env = tmp_path / "l4-env.json" if l4_paths else None
+        l4_albedo = tmp_path / "l4-albedo.ply" if l4_paths else None
+        l4_summary = tmp_path / "l4.json" if l4_paths else None
+
+        # Full .astel package binding L0 + L3 (+ L4 appearance) with per-gaussian
+        # provenance. Every primitive is fully generated (provenance = 0.0 ==
+        # "generated", per the manifest convention "1=measured, 0=generated"),
+        # matching the honest 0%-measured hallucination report.
         package = build_minimal_package(
             asset_id=task_id,
             created=datetime.now(UTC).isoformat(),
@@ -349,6 +437,9 @@ def produce_artifacts(
             l0_ply_path=l0_ply,
             l0_count=l0.count,
             l0_provenance=[0.0] * l0.count,
+            l4_env_path=l4_env,
+            l4_albedo_path=l4_albedo,
+            l4_summary_path=l4_summary,
             quality_report=build_package_quality_report(modality=modality),
             prompt=prompt or None,
             seed=seed,
@@ -359,6 +450,8 @@ def produce_artifacts(
         artifacts.append("package.astel")
 
     report = build_quality_report(count=cloud.count, modality=modality)
+    if appearance_summary is not None:
+        report["appearance"] = appearance_summary
     store.put(task_id, "quality-report.json", json.dumps(report).encode("utf-8"))
     artifacts.append("quality-report.json")
 

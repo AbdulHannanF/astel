@@ -399,7 +399,23 @@ export interface StageTelemetry {
   total_usd_estimate?: number;
 }
 
+/**
+ * Origin taxonomy for the quality report (CLAUDE.md §1 honesty contract).
+ *
+ * - `measured`  — reconstructed from real capture with ground-truth comparison (COLMAP path).
+ * - `generated` — generative / self-consistency only, no ground truth (text/image → TripoSplat → 2DGS).
+ * - `stub`      — deterministic procedural placeholder, NOT derived from the user's input (CPU stub producer).
+ *
+ * Optional/additive: absent on older packages; callers must handle `undefined`.
+ */
+export type AssetOrigin = "measured" | "generated" | "stub";
+
 export interface QualityReport {
+  /**
+   * Origin taxonomy for honesty display in the Truth Meter.
+   * Optional for backward-compat with packages that predate this field.
+   */
+  origin?: AssetOrigin;
   geometric_error: GeometricError;
   scale_confidence: ScaleConfidence;
   hallucination: Hallucination;

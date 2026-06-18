@@ -1,0 +1,23 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Astel Importer",
+  "Description": "Imports .astel packages: auto-configures UBodySetup collision (L5 convex set), mass override (L6), and physical materials. Delegates splat rendering to an existing splat plugin (XScene/NanoGS).",
+  "Category": "Import",
+  "CreatedBy": "Astel",
+  "CreatedByURL": "https://astel.ai",
+  "DocsURL": "https://astel.ai/docs/ue5-plugin",
+  "SupportURL": "",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "IsExperimentalVersion": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "AstelPlugin",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

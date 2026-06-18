@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .export import to_splat_cloud
-from .generative import run_l2_to_l3
+from .generative import DEFAULT_REFINE_ITERS, run_l2_to_l3
 from .packaging import build_package_quality_report, write_layer_stack
 from .smoke_refit import (
     DEFAULT_IMAGE_SIZE,
@@ -117,6 +117,20 @@ def build_quality_report(
     }
 
 
+def _stage_l6_json(l6_json_path: Path | None, out_dir: Path) -> None:
+    """Copy a pre-computed ``l6.json`` into ``out_dir`` so packaging can bind L6.
+
+    The API physics-material stage writes ``l6.json`` (per-region material /
+    density / articulation) to the artifact store and passes its path here via
+    ``--l6-json``; :func:`astel_gpu.packaging.write_layer_stack` then reads
+    ``out_dir/l6.json`` to compute the L6<->L5 mass join and bind the L6 layer.
+    No-op when absent (offline default, image modality, or a non-text path).
+    """
+    if l6_json_path is None or not l6_json_path.is_file():
+        return
+    (out_dir / "l6.json").write_bytes(l6_json_path.read_bytes())
+
+
 def _produce_from_image(
     task_id: str,
     modality: str,
@@ -127,14 +141,22 @@ def _produce_from_image(
     refine_iters: int,
     origin_note: str,
     extra_artifacts: list[str] | None = None,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
     """Shared core: image → TripoSplat L2 → 2DGS L3 → full layer stack.
 
     Used by both the image modality (:func:`_produce_generative`) and the text
     modality (:func:`_produce_text_generative`, where ``image`` is the
-    FLUX-generated reference frame).
+    FLUX-generated reference frame). ``longest_axis_m`` (when supplied) is the
+    Generation Spec's metric size estimate; it grounds the L5/L6 mass + the
+    package's ``meters_per_unit`` (CLAUDE.md §3 L1 metric scale). ``l6_json_path``
+    (when supplied) is staged into ``out_dir`` so the L6 layer binds into the
+    ``.astel`` package.
     """
     seed = stable_seed(task_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _stage_l6_json(l6_json_path, out_dir)
     result = run_l2_to_l3(image, seed=seed, refine_iters=refine_iters)
 
     l3_cloud = to_splat_cloud(result.l3_params)
@@ -153,6 +175,7 @@ def _produce_from_image(
         report_dict=report,
         package_report=package_report,
         l2_cloud=l2_cloud,
+        longest_axis_m=longest_axis_m,
     )
 
     metrics = result.metrics
@@ -175,6 +198,8 @@ def _produce_generative(
     out_dir: Path,
     *,
     refine_iters: int,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
     """Image → TripoSplat L2 → 2DGS L3 → full layer stack."""
     return _produce_from_image(
@@ -184,8 +209,10 @@ def _produce_generative(
         image,
         out_dir,
         refine_iters=refine_iters,
+        longest_axis_m=longest_axis_m,
+        l6_json_path=l6_json_path,
         origin_note=(
-            "Generated: single image → TripoSplat L2 → 2DGS L3 distillation. "
+            "Generated: single image → TripoSplat L2 → 2DGS L3 surfelization. "
             "Nothing is measured against reality."
         ),
     )
@@ -198,8 +225,10 @@ def _produce_text_generative(
     out_dir: Path,
     *,
     refine_iters: int,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Text → FLUX.1-schnell image → TripoSplat L2 → 2DGS L3 → full layer stack."""
+    """Text → SDXL/FLUX image → TripoSplat L2 → 2DGS L3 → full layer stack."""
     seed = stable_seed(task_id)
     flux_prompt = build_flux_prompt(prompt)
     image_path = out_dir / "text-reference.png"
@@ -217,8 +246,10 @@ def _produce_text_generative(
         image_path,
         out_dir,
         refine_iters=refine_iters,
+        longest_axis_m=longest_axis_m,
+        l6_json_path=l6_json_path,
         origin_note=(
-            "Generated from text: prompt → FLUX.1-schnell image → TripoSplat "
+            "Generated from text: prompt → SDXL/FLUX image → TripoSplat "
             "L2 → 2DGS L3. Nothing measured against reality."
         ),
         extra_artifacts=["text-reference.png", "text2img-metrics.json"],
@@ -281,7 +312,9 @@ def produce(
     out_dir: Path,
     iters: int = 1500,
     image: Path | None = None,
-    refine_iters: int = 1500,
+    refine_iters: int = DEFAULT_REFINE_ITERS,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
     """Run the GPU pipeline and write the full artifact stack into ``out_dir``.
 
@@ -289,15 +322,34 @@ def produce(
     readable ``image`` is supplied; to the text-generative path when
     ``modality == "text"`` and a non-empty ``prompt`` is supplied; otherwise the
     render-then-refit smoke path (e.g. empty text prompt, video modality).
+
+    ``longest_axis_m`` (the Generation Spec's metric size estimate) grounds the
+    mass + scale on the two generative paths; the smoke path stays ungrounded
+    (its geometry is not the object, so a metric scale would be meaningless).
+    ``l6_json_path`` (the API physics-material stage's ``l6.json``) is staged into
+    ``out_dir`` so the L6 layer binds into the package on the generative paths.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     if modality == "image" and image is not None and image.is_file():
         return _produce_generative(
-            task_id, modality, prompt, image, out_dir, refine_iters=refine_iters
+            task_id,
+            modality,
+            prompt,
+            image,
+            out_dir,
+            refine_iters=refine_iters,
+            longest_axis_m=longest_axis_m,
+            l6_json_path=l6_json_path,
         )
     if modality == "text" and prompt.strip():
         return _produce_text_generative(
-            task_id, modality, prompt, out_dir, refine_iters=refine_iters
+            task_id,
+            modality,
+            prompt,
+            out_dir,
+            refine_iters=refine_iters,
+            longest_axis_m=longest_axis_m,
+            l6_json_path=l6_json_path,
         )
     return _produce_smoke(task_id, modality, prompt, out_dir, iters=iters)
 
@@ -315,7 +367,25 @@ def main() -> None:
         default=None,
         help="Input image for the generative (image) modality.",
     )
-    parser.add_argument("--refine-iters", type=int, default=1500)
+    parser.add_argument("--refine-iters", type=int, default=DEFAULT_REFINE_ITERS)
+    parser.add_argument(
+        "--longest-axis-m",
+        type=float,
+        default=None,
+        help=(
+            "Metric size estimate (longest axis, metres) from the Generation "
+            "Spec; grounds the L5/L6 mass + package scale on the generative paths."
+        ),
+    )
+    parser.add_argument(
+        "--l6-json",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a pre-computed l6.json (physics-material layer); staged into "
+            "--out so the L6 layer binds into the .astel package."
+        ),
+    )
     args = parser.parse_args()
 
     result = produce(
@@ -326,6 +396,8 @@ def main() -> None:
         args.iters,
         image=args.image,
         refine_iters=args.refine_iters,
+        longest_axis_m=args.longest_axis_m,
+        l6_json_path=args.l6_json,
     )
     print(json.dumps(result, indent=2, default=str))
 

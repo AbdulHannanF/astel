@@ -425,6 +425,7 @@ class QualityReport(AstelModel):
     view_metrics: ViewMetrics | None = None
     stage_telemetry: StageTelemetry | None = None
     caveats: list[str] | None = None
+    origin: Literal["measured", "generated", "stub"] | None = None
 
 
 # ---------------------------------------------------------------------------

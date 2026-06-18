@@ -34,6 +34,31 @@
   padding: 1px 6px;
 }
 
+/* Origin taxonomy pills — extend the stub-pill base. */
+.truth__origin-pill {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--ink-1);
+  border-radius: var(--r-pill);
+  padding: 1px 6px;
+}
+/* stub → red/danger */
+.truth__origin-pill--stub {
+  background: #c0392b;
+  color: #fff;
+}
+/* generated → amber/warn */
+.truth__origin-pill--generated {
+  background: var(--warn);
+}
+/* measured → green/success */
+.truth__origin-pill--measured {
+  background: var(--measured);
+  color: var(--ink-1);
+}
+
 .truth__caveat {
   margin-top: var(--space-sm);
   font-size: var(--text-xs);

@@ -157,6 +157,7 @@ _PRODUCED_ARTIFACTS: frozenset[str] = frozenset(
         "l3.ply",
         "l3.spz",
         "l3.sog",
+        "l3.glb",
         "package.astel",
         "l5.stl",
         "l5-mass.json",

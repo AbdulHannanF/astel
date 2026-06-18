@@ -69,9 +69,9 @@ export const SAMPLE_LAYERS: readonly LayerDef[] = [
   {
     id: "L4",
     name: "Appearance",
-    blurb: "Per-splat PBR + separated illumination",
+    blurb: "Per-splat albedo + separated illumination — open the Relight Studio",
     kind: "material",
-    availability: "pending",
+    availability: "available",
   },
   {
     id: "L5",
@@ -125,7 +125,9 @@ export function liveLayers(
 
   return SAMPLE_LAYERS.map((layer) => {
     const idx = STAGE_LAYER_ORDER.indexOf(layer.id);
-    if (idx === -1) return layer; // L4-L7 untouched: pending/locked as defined
+    // L4 is produced for every asset (appearance is CPU-pure); L5-L7 keep their
+    // defined availability (L5 only when solidify succeeds, L7 locked).
+    if (idx === -1) return layer;
     const availability: LayerAvailability =
       idx <= activeIndex ? "available" : "pending";
     return { ...layer, availability };

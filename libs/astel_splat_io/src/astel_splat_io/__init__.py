@@ -11,11 +11,15 @@ Public surface:
   quaternions). See ``FORMATS.md`` for the verified spec and sources.
 - :func:`write_sog` / :func:`read_sog` — PlayCanvas SOG/SOGS bundle. Partial:
   see ``FORMATS.md`` for what is implemented.
+- :func:`write_gltf` / :func:`read_gltf` — KHR_gaussian_splatting GLB (RC
+  schema, Feb 2026).  See ``docs/architecture/coordinate-conventions.md`` for
+  the per-engine coordinate transforms.
 - :func:`write_provenance_sidecar` — ``*.astl.json`` + companion ``.bin``
   per manifest-v0 section 11.3.
 """
 
 from astel_splat_io.cloud import SplatCloud
+from astel_splat_io.gltf import read_gltf, write_gltf
 from astel_splat_io.ply import read_ply, write_ply
 from astel_splat_io.provenance import write_provenance_sidecar
 from astel_splat_io.sog import read_sog, write_sog
@@ -23,9 +27,11 @@ from astel_splat_io.spz import read_spz, write_spz
 
 __all__ = [
     "SplatCloud",
+    "read_gltf",
     "read_ply",
     "read_sog",
     "read_spz",
+    "write_gltf",
     "write_ply",
     "write_provenance_sidecar",
     "write_sog",

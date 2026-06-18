@@ -23,11 +23,31 @@ positions + outward normals
    → watertight triangle mesh (outward-wound)
    → mass properties via the divergence theorem (mass.py, pure numpy)
    → binary .stl                                (stl.py)
+   → OPC 3MF archive                            (print3mf.py)
+   → convex hull set (CoACD / scipy fallback)   (convex.py)
+   → printability report                        (printability.py)
 ```
 
 `solidify.solidify(...)` ties it together; `surfel_normals(...)` derives per-splat
 outward normals from 2DGS quats + log-scales for the producer integration.
 
-Deferred to follow-on sessions (per DECISIONS row 31): Open3D TSDF fusion from L3
-depth, CoACD convex decomposition for engine collision proxies, `.3mf` export,
-and printability checks (wall thickness / overhangs / hollowing).
+## Print exports
+
+| Format | Module | Notes |
+|--------|--------|-------|
+| `.stl` | `stl.py` | Binary STL, hand-rolled, no deps |
+| `.3mf` | `print3mf.py` | OPC zip, 3MF Core spec, hand-rolled stdlib `zipfile` |
+
+## Collision proxies
+
+`convex.py` runs **CoACD** (PyPI `coacd`, MIT) when available; falls back to a
+single scipy convex hull. `write_convex_glb` writes `.glb` (trimesh optional) or
+`.npz` (numpy-only fallback). `ConvexSet.method` records which path was taken.
+
+## Printability analysis
+
+`printability.analyze_printability(SolidResult)` returns a `PrintabilityReport`
+with: `min_wall_model_units`/`min_wall_mm` (from interior SDF), `overhang_fraction`
+(area-weighted, configurable threshold), `hollow_volume_fraction` (material savings
+estimate), and honesty caveats for discretization bias and scale grounding.
+Pass `meters_per_unit` to enable metric (mm) wall-thickness conversion.

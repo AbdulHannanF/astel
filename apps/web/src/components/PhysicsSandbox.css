@@ -1,0 +1,153 @@
+.physics {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(130% 100% at 50% -10%, oklch(21% 0.01 72) 0%, var(--ink-0) 72%);
+}
+
+.physics-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.physics-overlay {
+  position: absolute;
+  display: flex;
+  gap: var(--space-xs);
+  z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.physics-top {
+  top: var(--space-md);
+  left: var(--space-md);
+  right: var(--space-md);
+  align-items: center;
+}
+
+.physics-center {
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.physics-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.3em 0.7em;
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  background: oklch(18% 0.009 71 / 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+.physics-chip b {
+  color: var(--accent-bright);
+}
+
+.physics-panel {
+  position: absolute;
+  left: var(--space-md);
+  bottom: var(--space-md);
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  width: min(340px, calc(100% - 2 * var(--space-md)));
+  background: oklch(16% 0.008 70 / 0.82);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+
+.physics-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.physics-label {
+  font-size: var(--text-xs);
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.physics-seg {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.physics-seg button {
+  flex: 1 1 auto;
+  padding: 0.4em 0.5em;
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  background: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-out-quart);
+}
+.physics-seg button:hover {
+  background: var(--ink-4);
+}
+.physics-seg button.active {
+  color: var(--ink-0);
+  background: var(--accent);
+  border-color: var(--accent-bright);
+  font-weight: 600;
+}
+
+.physics-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+.physics-btn {
+  flex: 1;
+  padding: 0.55em 0.5em;
+  font-size: var(--text-sm);
+  color: var(--text-hi);
+  background: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-out-quart);
+}
+.physics-btn:hover {
+  background: var(--ink-4);
+}
+.physics-btn.primary {
+  color: var(--ink-0);
+  background: var(--accent);
+  border-color: var(--accent-bright);
+  font-weight: 600;
+}
+
+.physics-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.physics-error {
+  text-align: center;
+  padding: var(--space-lg);
+  background: oklch(16% 0.008 70 / 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.physics-error h3 {
+  font-size: var(--text-base);
+  margin-bottom: var(--space-xs);
+}
+.physics-error p {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}

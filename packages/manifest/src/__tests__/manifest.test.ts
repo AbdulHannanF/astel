@@ -126,3 +126,42 @@ describe("type-level sanity", () => {
     expect(m.layers.l3?.kind).toBe("refined_gaussians");
   });
 });
+
+describe("quality_report.origin taxonomy", () => {
+  it("validates a quality report WITH origin='stub' (new field)", () => {
+    const manifest = makeFixtureManifest();
+    manifest.quality_report.origin = "stub";
+    const result = parseManifest(manifest);
+    expect(result.ok).toBe(true);
+  });
+
+  it("validates a quality report WITH origin='generated'", () => {
+    const manifest = makeFixtureManifest();
+    manifest.quality_report.origin = "generated";
+    const result = parseManifest(manifest);
+    expect(result.ok).toBe(true);
+  });
+
+  it("validates a quality report WITH origin='measured'", () => {
+    const manifest = makeFixtureManifest();
+    manifest.quality_report.origin = "measured";
+    const result = parseManifest(manifest);
+    expect(result.ok).toBe(true);
+  });
+
+  it("validates a quality report WITHOUT origin (backward-compat — field is optional)", () => {
+    const manifest = makeFixtureManifest();
+    // Ensure the field is absent (fixture does not set it by default)
+    expect(manifest.quality_report.origin).toBeUndefined();
+    const result = parseManifest(manifest);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an invalid origin value", () => {
+    const manifest = makeFixtureManifest();
+    // @ts-expect-error -- intentionally invalid for the negative test
+    manifest.quality_report.origin = "hallucinated";
+    const result = parseManifest(manifest);
+    expect(result.ok).toBe(false);
+  });
+});

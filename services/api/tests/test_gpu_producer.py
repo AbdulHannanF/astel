@@ -136,6 +136,128 @@ def test_gpu_image_modality_threads_capture_image(
     assert "l2.ply" in result["artifacts"]
 
 
+def test_gpu_dispatch_threads_longest_axis_m_flag(
+    store: LocalArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supplied longest_axis_m is passed to the GPU CLI as --longest-axis-m."""
+    monkeypatch.setenv("ASTEL_PRODUCER", "gpu")
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(
+        cmd: list[str], cwd: Any, capture_output: bool, text: bool, check: bool
+    ) -> Any:
+        seen["cmd"] = cmd
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "quality-report.json").write_text('{"splats": 8000}')
+
+        class _Result:
+            stdout = "ok"
+            stderr = ""
+            returncode = 0
+
+        return _Result()
+
+    with patch("astel_api.gpu_producer.subprocess.run", side_effect=fake_run):
+        produce_artifacts_dispatch(
+            "task-scale", "text", "a brass astrolabe", store, longest_axis_m=0.42
+        )
+
+    cmd = seen["cmd"]
+    assert "--longest-axis-m" in cmd
+    assert cmd[cmd.index("--longest-axis-m") + 1] == "0.42"
+
+
+def test_gpu_dispatch_omits_longest_axis_m_when_absent(
+    store: LocalArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No estimate -> no --longest-axis-m flag (stays honestly ungrounded)."""
+    monkeypatch.setenv("ASTEL_PRODUCER", "gpu")
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(
+        cmd: list[str], cwd: Any, capture_output: bool, text: bool, check: bool
+    ) -> Any:
+        seen["cmd"] = cmd
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "quality-report.json").write_text('{"splats": 1}')
+
+        class _Result:
+            stdout = "ok"
+            stderr = ""
+            returncode = 0
+
+        return _Result()
+
+    with patch("astel_api.gpu_producer.subprocess.run", side_effect=fake_run):
+        produce_artifacts_dispatch("task-noscale", "text", "a torus", store)
+
+    assert "--longest-axis-m" not in seen["cmd"]
+
+
+def test_gpu_dispatch_threads_l6_json_flag(
+    store: LocalArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supplied l6_json_path is passed to the GPU CLI as --l6-json."""
+    monkeypatch.setenv("ASTEL_PRODUCER", "gpu")
+    seen: dict[str, list[str]] = {}
+    l6_path = tmp_path / "l6.json"
+    l6_path.write_text("{}")
+
+    def fake_run(
+        cmd: list[str], cwd: Any, capture_output: bool, text: bool, check: bool
+    ) -> Any:
+        seen["cmd"] = cmd
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "quality-report.json").write_text('{"splats": 8000}')
+
+        class _Result:
+            stdout = "ok"
+            stderr = ""
+            returncode = 0
+
+        return _Result()
+
+    with patch("astel_api.gpu_producer.subprocess.run", side_effect=fake_run):
+        produce_artifacts_dispatch(
+            "task-l6", "text", "a hinged box", store, l6_json_path=l6_path
+        )
+
+    cmd = seen["cmd"]
+    assert "--l6-json" in cmd
+    assert cmd[cmd.index("--l6-json") + 1] == str(l6_path)
+
+
+def test_gpu_dispatch_omits_l6_json_when_absent(
+    store: LocalArtifactStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No l6_json_path -> no --l6-json flag (offline default, no L6 layer)."""
+    monkeypatch.setenv("ASTEL_PRODUCER", "gpu")
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(
+        cmd: list[str], cwd: Any, capture_output: bool, text: bool, check: bool
+    ) -> Any:
+        seen["cmd"] = cmd
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "quality-report.json").write_text('{"splats": 1}')
+
+        class _Result:
+            stdout = "ok"
+            stderr = ""
+            returncode = 0
+
+        return _Result()
+
+    with patch("astel_api.gpu_producer.subprocess.run", side_effect=fake_run):
+        produce_artifacts_dispatch("task-nol6", "text", "a torus", store)
+
+    assert "--l6-json" not in seen["cmd"]
+
+
 def test_gpu_image_modality_without_capture_omits_image_flag(
     store: LocalArtifactStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

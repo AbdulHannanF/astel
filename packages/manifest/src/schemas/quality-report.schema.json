@@ -7,6 +7,11 @@
   "required": ["geometric_error", "scale_confidence", "hallucination"],
   "additionalProperties": false,
   "properties": {
+    "origin": {
+      "description": "Origin taxonomy for honesty display in the Truth Meter. Optional/additive — absent on packages predating this field. 'measured' = reconstructed from real capture with ground-truth comparison; 'generated' = generative / self-consistency only, no ground truth; 'stub' = deterministic procedural placeholder, not derived from user input.",
+      "type": "string",
+      "enum": ["measured", "generated", "stub"]
+    },
     "geometric_error": {
       "description": "L3-vs-L1 surface fidelity. Null fields require a 'reason' (e.g. pure text-to-3D has no measured reference).",
       "type": "object",

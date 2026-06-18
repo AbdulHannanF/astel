@@ -1,0 +1,16 @@
+{
+  "name": "com.astel.importer",
+  "version": "0.1.0",
+  "displayName": "Astel Importer",
+  "description": "Imports .astel packages into Unity: auto-configures MeshColliders (L5 convex set), Rigidbody mass (L6), and PhysicMaterial (L6 friction/restitution). Delegates splat rendering to UnityGaussianSplatting (aras-p).",
+  "unity": "6000.0",
+  "author": {
+    "name": "Astel",
+    "url": "https://astel.ai"
+  },
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "keywords": ["gaussian-splatting", "physics", "astel"],
+  "license": "MIT"
+}

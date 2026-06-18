@@ -136,6 +136,7 @@ def optimize_2dgs(
     spatial_lr_scale: float = 1.0,
     lambda_normal: float = DEFAULT_LAMBDA_NORMAL,
     lambda_dist: float = DEFAULT_LAMBDA_DIST,
+    means_lr_scale: float = 1.0,
 ) -> tuple[GaussianParams, float]:
     """Optimize ``init`` as 2DGS surfels to match ``targets``.
 
@@ -143,6 +144,16 @@ def optimize_2dgs(
     same ``spatial_lr_scale`` metric-coords trick, same forward soft-clamps) but
     renders via :func:`render_2dgs` and adds :func:`surface_reg_loss`. Returns
     ``(optimized_params, init_psnr_db)``.
+
+    ``means_lr_scale`` (default ``1.0``) further scales the *position* learning
+    rate only. The capture path keeps it at ``1.0`` (positions must move to fit
+    real photos). The generative path sets it low/zero: there ``init`` is already
+    an excellent high-count generator cloud (TripoSplat L2), so letting positions
+    take full 5e-3 steps for 1500 iters makes splats drift off-surface into
+    floaters that degrade the asset and inflate its bounding radius (measured:
+    262k L3 floaters vs. a clean L2). A small/zero position LR turns this into a
+    *surfelization* — scales/opacity/colour/quats adapt to flatten the gaussians
+    into surfels while the proven geometry is preserved.
     """
     params = make_trainable(init)
     use_distloss = lambda_dist > 0.0
@@ -152,7 +163,7 @@ def optimize_2dgs(
 
     optimizer = torch.optim.Adam(
         [
-            {"params": [params.means], "lr": lr * spatial_lr_scale},
+            {"params": [params.means], "lr": lr * spatial_lr_scale * means_lr_scale},
             {"params": [params.scales], "lr": lr * spatial_lr_scale},
             {"params": [params.quats, params.opacities, params.colors], "lr": lr},
         ]

@@ -78,6 +78,7 @@ _ARTIFACT_LAYER: dict[str, str] = {
     "l3.ply": "L3",
     "l3.spz": "L3",
     "l3.sog": "L3",
+    "l3.glb": "L3",  # KHR_gaussian_splatting glTF — another L3 delivery format
     "package.astel": "L3",  # the bound asset is anchored on the hero layer
     "l4.ply": "L4",
     "l5.stl": "L5",

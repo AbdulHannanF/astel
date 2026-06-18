@@ -1,5 +1,5 @@
 import type { Conditioning } from "../lib/api.ts";
-import type { QualityReport } from "../lib/report.ts";
+import type { AssetOrigin, QualityReport } from "../lib/report.ts";
 import "./TruthMeter.css";
 
 interface TruthMeterProps {
@@ -14,26 +14,47 @@ interface TruthMeterProps {
   conditioning?: Conditioning | null;
 }
 
+/** Pill config per origin value. */
+const ORIGIN_PILL: Record<
+  AssetOrigin,
+  { className: string; label: string; title: string }
+> = {
+  stub: {
+    className: "truth__origin-pill truth__origin-pill--stub",
+    label: "STUB · placeholder geometry",
+    title: "Stub pipeline output — illustrative, not derived from your input",
+  },
+  generated: {
+    className: "truth__origin-pill truth__origin-pill--generated",
+    label: "GENERATED · no ground truth",
+    title: "Asset was generated without a real-world reference; numbers are self-consistency estimates",
+  },
+  measured: {
+    className: "truth__origin-pill truth__origin-pill--measured",
+    label: "MEASURED",
+    title: "Asset was reconstructed from real capture data with ground-truth comparison",
+  },
+};
+
 export function TruthMeter({
   report,
   errored,
   conditioning,
 }: TruthMeterProps): React.JSX.Element {
-  const isStub =
-    report !== null && report.origin != null && report.origin !== "measured";
+  // Typed origin from the report (absent on older packages — no pill shown if missing).
+  const origin: AssetOrigin | undefined = report?.origin;
   const isUnconditioned = conditioning === "none";
+
+  const pillConfig = origin != null ? ORIGIN_PILL[origin] : null;
 
   return (
     <section className="panel">
       <div className="panel__head">
         <span className="truth__title-group">
           <h2 className="panel__title">Truth Meter</h2>
-          {isStub && (
-            <span
-              className="truth__stub-pill"
-              title="Stub pipeline output — illustrative, not measured"
-            >
-              STUB
+          {pillConfig != null && (
+            <span className={pillConfig.className} title={pillConfig.title}>
+              {pillConfig.label}
             </span>
           )}
           {isUnconditioned && (

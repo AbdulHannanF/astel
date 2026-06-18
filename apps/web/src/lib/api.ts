@@ -184,3 +184,47 @@ export async function* streamGenerationEvents(
     reader.releaseLock();
   }
 }
+
+// --- Pricing (GET /v1/pricing) ---
+export interface LayerPriceRef {
+  code: string;
+  label: string;
+  tier: string; // "preview" | "refine" | "addon" | "print"
+  credits: number;
+}
+
+export interface PricingResource {
+  credit_usd_rate: number;
+  layers: LayerPriceRef[];
+  modes: Record<string, string[]>;
+  notes: string[];
+}
+
+export async function fetchPricing(
+  signal?: AbortSignal,
+): Promise<PricingResource> {
+  const res = await fetch("/v1/pricing", { signal: signal ?? null });
+  if (!res.ok) {
+    throw new ApiError(`Failed to fetch pricing (${res.status})`, res.status);
+  }
+  return (await res.json()) as PricingResource;
+}
+
+// --- Pipeline (GET /v1/pipeline) ---
+export interface PipelineStageSpec {
+  stage: LayerStage;
+  layer: string;
+  label: string;
+  description: string;
+  nominal_seconds: number;
+}
+
+export async function fetchPipeline(
+  signal?: AbortSignal,
+): Promise<PipelineStageSpec[]> {
+  const res = await fetch("/v1/pipeline", { signal: signal ?? null });
+  if (!res.ok) {
+    throw new ApiError(`Failed to fetch pipeline (${res.status})`, res.status);
+  }
+  return (await res.json()) as PipelineStageSpec[];
+}

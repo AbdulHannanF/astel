@@ -79,11 +79,56 @@ describe("TruthMeter", () => {
     const mapped = mapApiReport(api, "task-123");
 
     render(<TruthMeter report={mapped} errored={false} />);
-    expect(screen.getByText("STUB")).toBeInTheDocument();
+    // New typed pill: "STUB · placeholder geometry"
+    expect(screen.getByText(/^STUB/)).toBeInTheDocument();
     expect(
       screen.getByText(/Stub pipeline output: illustrative only\./),
     ).toBeInTheDocument();
     expect(screen.getByText(/0\.9/)).toBeInTheDocument(); // chamfer
     expect(screen.getByText(/31\.2/)).toBeInTheDocument(); // psnr
+  });
+});
+
+describe("TruthMeter origin taxonomy pills", () => {
+  const BASE_REPORT: QualityReport = {
+    asset_id: "pill-test",
+    name: "Pill Test",
+    modality: "generated",
+    splat_count: 48000,
+    splat_budget: "100k",
+    active_layer: "L3",
+    scale: { longest_axis_m: 0.18, confidence: 0.8, method: "VLM", note: "est" },
+    geometry: { chamfer_mm_vs_l1: 1.0, psnr_db: 30.0, ssim: 0.9, normals_present: true },
+    provenance: { measured_ratio: 0, generated_ratio: 1, note: "" },
+  };
+
+  it("renders red STUB pill for origin='stub'", () => {
+    render(<TruthMeter report={{ ...BASE_REPORT, origin: "stub" }} errored={false} />);
+    const pill = screen.getByText(/STUB · placeholder geometry/i);
+    expect(pill).toBeInTheDocument();
+    expect(pill.className).toContain("truth__origin-pill--stub");
+  });
+
+  it("renders amber GENERATED pill for origin='generated'", () => {
+    render(<TruthMeter report={{ ...BASE_REPORT, origin: "generated" }} errored={false} />);
+    const pill = screen.getByText(/GENERATED · no ground truth/i);
+    expect(pill).toBeInTheDocument();
+    expect(pill.className).toContain("truth__origin-pill--generated");
+  });
+
+  it("renders green MEASURED pill for origin='measured'", () => {
+    render(<TruthMeter report={{ ...BASE_REPORT, origin: "measured" }} errored={false} />);
+    // The origin pill has class truth__origin-pill--measured; find via role=generic / title
+    const pill = document.querySelector(".truth__origin-pill--measured");
+    expect(pill).not.toBeNull();
+    expect(pill?.textContent).toBe("MEASURED");
+  });
+
+  it("renders no origin pill when origin is absent (backward-compat)", () => {
+    render(<TruthMeter report={BASE_REPORT} errored={false} />);
+    expect(screen.queryByText(/placeholder geometry/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no ground truth/i)).not.toBeInTheDocument();
+    // No .truth__origin-pill element at all
+    expect(document.querySelector(".truth__origin-pill")).toBeNull();
   });
 });

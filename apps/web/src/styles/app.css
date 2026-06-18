@@ -85,6 +85,55 @@
   min-height: 0;
 }
 
+.stage-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The active workspace view (viewer / relight / physics) fills the column. */
+.stage-main > .viewport-wrap,
+.stage-main > .relight,
+.stage-main > .physics {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.stage-tabs {
+  position: absolute;
+  top: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-overlay);
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: oklch(15% 0.008 70 / 0.78);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-md);
+}
+.stage-tabs button {
+  padding: 0.4em 0.95em;
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-pill);
+  transition: all var(--dur-fast) var(--ease-out-quart);
+}
+.stage-tabs button:hover {
+  color: var(--text-hi);
+}
+.stage-tabs button.active {
+  color: var(--ink-0);
+  background: var(--accent);
+  font-weight: 600;
+}
+
 .viewport-wrap {
   position: relative;
   min-height: 0;

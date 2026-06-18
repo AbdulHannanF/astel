@@ -66,6 +66,8 @@ def _run_gpu_producer(
     prompt: str,
     store: ArtifactStore,
     capture_id: str | None = None,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
     """Invoke ``astel_gpu.produce`` via ``run-python.cmd`` in ``pipelines/gpu``.
 
@@ -94,6 +96,10 @@ def _run_gpu_producer(
         ]
         if modality == "image" and image_path is not None:
             cmd += ["--image", str(image_path)]
+        if longest_axis_m is not None:
+            cmd += ["--longest-axis-m", str(longest_axis_m)]
+        if l6_json_path is not None:
+            cmd += ["--l6-json", str(l6_json_path)]
         result = subprocess.run(
             cmd,
             cwd=_GPU_PIPELINE_DIR,
@@ -128,15 +134,14 @@ def _gpu_conditioning(
 ) -> str:
     """Best-effort label of what input the GPU path's geometry reflects.
 
-    Per the wiring matrix (docs/research/15-pipeline-wiring-audit.md), Image
-    GPU with a resolved capture is the only cell that runs real
-    prompt/capture-conditioned generation (TripoSplat -> 2DGS), hence
-    ``"image"``. Text with a non-empty prompt is labelled ``"prompt"`` even
-    though today's text path runs the prompt-independent smoke-refit (see
-    audit §2.1/§2.3) -- this field exists so a future text-to-multiview branch
-    can be wired in without a schema change, and so a caller can at least tell
-    "a prompt was supplied" from "nothing was supplied" (``"none"``: video and
-    empty-prompt cases, where the geometry is unconditioned either way).
+    Both generative cells run prompt/capture-conditioned generation today:
+    Image GPU with a resolved capture runs single image -> TripoSplat L2 ->
+    2DGS L3 (``"image"``); Text GPU with a non-empty prompt runs prompt ->
+    SDXL/FLUX reference image -> TripoSplat L2 -> 2DGS L3 (``"prompt"``) -- so
+    the geometry IS conditioned on the prompt via the generated image (wired in
+    session 22; the older smoke-refit text path is gone). ``"none"`` covers the
+    cases whose geometry is genuinely unconditioned: video (no generator wired
+    yet -> smoke-refit fallback) and an empty prompt.
     """
     if modality == "image" and image_path is not None:
         return "image"
@@ -151,6 +156,8 @@ def produce_artifacts_dispatch(
     prompt: str,
     store: ArtifactStore,
     capture_id: str | None = None,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
     """Select the stub (default) or GPU (``ASTEL_PRODUCER=gpu``) producer.
 
@@ -158,7 +165,9 @@ def produce_artifacts_dispatch(
     ``conditioning: "none"`` field -- this dispatcher adds no other behaviour
     unless the env var is set. ``capture_id`` is only consumed by the GPU path
     (to resolve the source image for the image modality); the stub ignores it,
-    exactly as before.
+    exactly as before. ``longest_axis_m`` (the Generation Spec's metric size
+    estimate) is likewise GPU-only: it grounds the L5/L6 mass + package scale; the
+    stub's procedural geometry has no meaningful metric scale, so it is ignored.
 
     Logs at INFO which producer path is taken (audit §2.3/rec #6), and at
     WARNING if ``ASTEL_PRODUCER`` is set to a non-empty value other than
@@ -168,7 +177,9 @@ def produce_artifacts_dispatch(
     producer_env = os.environ.get("ASTEL_PRODUCER", "")
     if producer_env == "gpu":
         logger.info("producer dispatch for %s: gpu (ASTEL_PRODUCER=gpu)", task_id)
-        return _run_gpu_producer(task_id, modality, prompt, store, capture_id)
+        return _run_gpu_producer(
+            task_id, modality, prompt, store, capture_id, longest_axis_m, l6_json_path
+        )
 
     if producer_env:
         logger.warning(

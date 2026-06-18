@@ -134,6 +134,44 @@ def _conditioning_of(
     return None
 
 
+def _spec_longest_axis_m(spec_payload: dict[str, object] | None) -> float | None:
+    """Pull the metric longest-axis estimate (metres) from a successful spec.
+
+    Returns ``None`` unless the Generation Spec stage produced a usable positive
+    size estimate -- so the producer stays honestly ungrounded rather than
+    fabricating a metric scale (CLAUDE.md §10.4). Used to ground the produced
+    asset's L5/L6 mass + package ``meters_per_unit``.
+    """
+    if not spec_payload or spec_payload.get("status") != "ok":
+        return None
+    spec = spec_payload.get("spec")
+    if not isinstance(spec, dict):
+        return None
+    target_scale = spec.get("target_scale")
+    if not isinstance(target_scale, dict):
+        return None
+    value = target_scale.get("longest_axis_m")
+    if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
+
+
+def _l6_json_artifact_path(
+    task_id: str, store: ArtifactStore, physics_payload: dict[str, object] | None
+) -> Path | None:
+    """Resolve the stored ``l6.json`` path when the physics stage produced one.
+
+    The physics-material stage writes ``l6.json`` only on success (status
+    ``"ok"``); a fixture-miss / skip writes a non-billable note instead. Returns
+    the local path so the GPU producer can bind the L6 layer into the package and
+    run the L6<->L5 mass join, or ``None`` (no L6 data, or a non-local store --
+    the same seam where an S3 store would download to a temp file first).
+    """
+    if not physics_payload or physics_payload.get("status") != "ok":
+        return None
+    return store.path_for(task_id, "l6.json")
+
+
 def _build_and_store_billing(
     task_id: str,
     mode: str,
@@ -299,12 +337,38 @@ async def create_generation(
 
     billing: BillingSummary | None = None
     try:
+        # Text-pipeline Generation Spec stage (offline by default; founder-gated
+        # for live spend) runs FIRST so its metric size estimate can ground the
+        # produced asset's scale + L5/L6 mass (CLAUDE.md §3 L1, §4: the spec
+        # conditions generation). A refine keyed on a prior preview inherits that
+        # preview's spec, so it is skipped here — the LLM spend (and the credit
+        # line) belong to the preview, not the refine (CLAUDE.md §7).
+        spec_payload: dict[str, object] | None = None
+        physics_payload: dict[str, object] | None = None
+        if body.refine_of is None:
+            spec_payload = run_generation_spec_stage(
+                task_id, body.modality.value, body.prompt, store, settings
+            )
+            # L6 physics-material reasons over the Generation Spec (not the
+            # produced asset), so it runs BEFORE produce: this lets the producer
+            # bind the l6.json layer into the .astel package AND compute the
+            # L6<->L5 mass join (write_layer_stack reads l6.json from its output
+            # dir). Running it after produce -- as it did previously -- left L6
+            # unbound in every shipped package and the mass join firing only in
+            # tests. A refine keyed on a preview inherits that preview's L6 and so
+            # is skipped here (the LLM spend belongs to the preview, CLAUDE.md §7).
+            physics_payload = run_physics_material_stage(
+                task_id, body.modality.value, spec_payload, store, settings
+            )
+
         production = produce_artifacts_dispatch(
             task_id,
             body.modality.value,
             body.prompt,
             store,
             capture_id=body.capture_id,
+            longest_axis_m=_spec_longest_axis_m(spec_payload),
+            l6_json_path=_l6_json_artifact_path(task_id, store, physics_payload),
         )
         row.produced = True
         row.splats = production.get("splats")
@@ -312,25 +376,11 @@ async def create_generation(
         conditioning = production.get("conditioning")
         row.conditioning = conditioning if isinstance(conditioning, str) else "none"
         await session.commit()
-        # Text-pipeline Generation Spec stage (offline by default; founder-gated
-        # for live spend). Runs after produce so it can thread the LLM size
-        # estimate into the freshly-written quality report. A refine keyed on a
-        # prior preview inherits that preview's spec, so it is skipped here —
-        # the LLM spend (and the credit line) belong to the preview, not the
-        # refine (CLAUDE.md §7).
-        spec_payload: dict[str, object] | None = None
+
         if body.refine_of is None:
-            spec_payload = run_generation_spec_stage(
-                task_id, body.modality.value, body.prompt, store, settings
-            )
+            # Thread the LLM size estimate into the freshly-written quality report
+            # (best-effort scale patch; the L6 layer is already bound by produce).
             apply_spec_scale_to_report(task_id, store, spec_payload)
-            # L6 world-awareness (M4): reason over the spec for per-region physics
-            # materials + articulation, stored as the billable l6.json layer.
-            # Offline/skipped by default (same founder gate as the spec stage);
-            # runs before billing so a delivered L6 is metered.
-            run_physics_material_stage(
-                task_id, body.modality.value, spec_payload, store, settings
-            )
         # Price the generation by its billing tier and store the credit ledger.
         billing = _build_and_store_billing(
             task_id, body.mode.value, body.refine_of, store, spec_payload

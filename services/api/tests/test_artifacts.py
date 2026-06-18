@@ -98,6 +98,13 @@ def test_produces_full_layer_stack(tmp_path: Path) -> None:
     assert spz_path is not None
     assert read_spz(spz_path).count == summary["splats"]
 
+    # The KHR_gaussian_splatting glTF export is emitted and round-trips.
+    from astel_splat_io.gltf import read_gltf
+
+    glb_path = store.path_for("task-stack", "l3.glb")
+    assert glb_path is not None
+    assert read_gltf(glb_path).count == summary["splats"]
+
 
 def test_astel_package_validates_and_binds_layers(tmp_path: Path) -> None:
     store = LocalArtifactStore(tmp_path)

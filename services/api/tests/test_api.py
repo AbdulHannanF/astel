@@ -22,7 +22,12 @@ from httpx import ASGITransport  # noqa: E402
 
 from astel_api.config import get_settings  # noqa: E402
 from astel_api.db import init_db  # noqa: E402
-from astel_api.main import app  # noqa: E402
+from astel_api.main import (  # noqa: E402
+    _l6_json_artifact_path,
+    _spec_longest_axis_m,
+    app,
+)
+from astel_api.storage import LocalArtifactStore  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -285,3 +290,58 @@ async def test_events_stream_reports_failure_when_production_failed(
 async def test_events_unknown_task_404(client: httpx.AsyncClient) -> None:
     resp = await client.get("/v1/generations/nope/events")
     assert resp.status_code == 404
+
+
+# ---- _spec_longest_axis_m (metric-scale grounding seam) ----------------------
+
+
+def test_spec_longest_axis_m_extracts_estimate() -> None:
+    payload: dict[str, object] = {
+        "status": "ok",
+        "spec": {"target_scale": {"longest_axis_m": 0.18, "confidence": 0.4}},
+    }
+    assert _spec_longest_axis_m(payload) == 0.18
+
+
+def test_spec_longest_axis_m_none_for_missing_or_skipped() -> None:
+    skipped: dict[str, object] = {"status": "skipped"}
+    no_spec: dict[str, object] = {"status": "ok"}
+    empty_spec: dict[str, object] = {"status": "ok", "spec": {}}
+    assert _spec_longest_axis_m(None) is None
+    assert _spec_longest_axis_m(skipped) is None
+    assert _spec_longest_axis_m(no_spec) is None
+    assert _spec_longest_axis_m(empty_spec) is None
+
+
+def test_spec_longest_axis_m_none_for_non_positive() -> None:
+    zero: dict[str, object] = {
+        "status": "ok",
+        "spec": {"target_scale": {"longest_axis_m": 0.0}},
+    }
+    neg: dict[str, object] = {
+        "status": "ok",
+        "spec": {"target_scale": {"longest_axis_m": -1.0}},
+    }
+    assert _spec_longest_axis_m(zero) is None
+    assert _spec_longest_axis_m(neg) is None
+
+
+# ---- _l6_json_artifact_path (L6 layer binding seam) --------------------------
+
+
+def test_l6_json_artifact_path_returns_path_when_ok(tmp_path: object) -> None:
+    """A produced L6 layer (status ok) resolves to the stored l6.json path."""
+    store = LocalArtifactStore(tmp_path)  # type: ignore[arg-type]
+    store.put("t1", "l6.json", b"{}")
+    payload: dict[str, object] = {"status": "ok"}
+    result = _l6_json_artifact_path("t1", store, payload)
+    assert result is not None
+    assert result.name == "l6.json"
+
+
+def test_l6_json_artifact_path_none_for_missing_or_skipped(tmp_path: object) -> None:
+    """No L6 layer (None / skipped) -> no path, so the producer omits --l6-json."""
+    store = LocalArtifactStore(tmp_path)  # type: ignore[arg-type]
+    skipped: dict[str, object] = {"status": "skipped"}
+    assert _l6_json_artifact_path("t2", store, None) is None
+    assert _l6_json_artifact_path("t2", store, skipped) is None

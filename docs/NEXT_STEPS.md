@@ -1,5 +1,184 @@
-# NEXT_STEPS — Runway (updated 2026-06-15, end of session 22)
+# NEXT_STEPS — Runway (updated 2026-06-18, end of session 27)
 
+> **Session 27 done — M5 CLOSED: KHR_gaussian_splatting glTF/GLB export,
+> coordinate-convention module, Unity + UE5 engine plugins, Python SDK + MCP server,
+> TypeScript SDK, docs site.** All gates green.
+> **glTF export (`astel_splat_io.gltf`):** `write_gltf`/`read_gltf` produce spec-compliant
+> KHR_gaussian_splatting GLB files (RC schema, Khronos Feb 2026). 4 accessors per Gaussian:
+> POSITION (VEC3), _ROTATION (VEC4 xyzw), _SCALE (VEC3 world-space σ), COLOR_0 (VEC4 rgba
+> 0..1 from SH band-0 + sigmoid opacity). Quaternion reorder `(w,x,y,z)→(x,y,z,w)` only —
+> 3DGS world == glTF frame. Round-trip lossless to float32. 14 new tests; 35 total.
+> **Coordinate conventions (`astel_splat_io.conventions`):** identity (glTF), X-negate +
+> quat handedness flip (Unity), axis remap + ×100 cm (UE5). 10 new tests. Canonical reference
+> doc at `docs/architecture/coordinate-conventions.md`.
+> **Unity package (`plugins/unity/com.astel.importer/`):** `AstelManifest.cs` (typed
+> deserialization), `AstelPhysicsSetup.cs` (Rigidbody mass + COM X-flip + PhysicMaterial
+> from L6 region 0), `AstelImportWindow.cs` (editor window: extract → physics setup → log
+> splat path). 7 NUnit tests. UPM manifest for Unity 6 LTS.
+> **UE5 plugin (`plugins/unreal/AstelPlugin/`):** `FAstelManifest`/`FAstelMassProps`/
+> `FAstelPhysicsRegion`/`FAstelArticulationHint` USTRUCTs; `ApplyPhysics` sets mass override,
+> COMNudge (UE cm, axes remapped), physical material override; `LoadFromDirectory`; UE5.6.
+> `Build.cs` deps: Core, Json, PhysicsCore, UnrealEd.
+> **Python SDK (`packages/sdk-python/`):** `AsyncAstelClient` (httpx) + `AstelClient` (sync
+> wrapper) with `generate`, `wait_for_generation`, `upload_capture`, `download_all_artifacts`.
+> Pydantic models with `is_ready`/`is_failed`/`artifact_url()` helpers. 10 pytest tests
+> (respx mock). ruff ✓ mypy ✓.
+> **MCP server (`packages/sdk-python/src/astel_sdk/mcp_server.py`):** 3 FastMCP tools —
+> `generate_asset`, `get_asset`, `list_pricing`. `astel-mcp` console script; `--transport
+> stdio` (default, Claude Desktop) or `sse`. Reads `ASTEL_API_URL` + `ASTEL_API_KEY`.
+> **TypeScript SDK (`packages/sdk-ts/`):** `@astel/sdk` — fetch-based `AstelClient`,
+> `AstelError`, `waitForGeneration`, full type coverage. 9 vitest tests. tsc clean.
+> **Docs site (`docs/site/`):** MkDocs Material, 10 pages — index, self-host, API reference,
+> splats-101, coordinate-conventions, Unity plugin, UE5 plugin, glTF export, Python SDK, MCP
+> server. `mkdocs serve` runs locally; CI deploy not yet wired.
+> **Gates green:** astel_splat_io ruff·mypy·**35** (+11 new) · astel_format **28** ·
+> astel_solid **37** · astel_appearance **25** · pipelines/gpu **94**+3skip ·
+> services/api **71**+1skip · @astel/manifest **15** · apps/web tsc-b·eslint·**43** ·
+> @astel/sdk tsc-b·**9** vitest (new) · astel-sdk ruff·mypy·**10** pytest (new).
+> **Honest gaps:** Engine CI (headless Unity/UE5) needs licensed runners — tested in pure code
+> only; KHR_gaussian_splatting RC churn (localized fix if spec changes before ratification);
+> UE5 plugin lacks built-in zip reader (document external extraction step); MCP `[mcp]` extra
+> optional (exits cleanly if not installed); docs site CI deploy not wired.
+> **M5 is closed. Next: M6 dynamics + scenes** (video→4DGS L7, scene seeds, LOD streaming)
+> **or the text→multiview bridge** (mission modality #1).
+> See [session-27 retro](retros/session-27.md) + DECISIONS.md (§ session 27).
+>
+> **Session 26 done — M4 CLOSED FOR REAL: photorealism fixed; two latent gaps
+> made live; one hard hang bounded.** Re-audited M4 for *unplugged / fake /
+> simulated* and answered the founder's photorealism check honestly. Re-ran every
+> session-25 gate first (counts matched — prior retros honest), then fixed three
+> measured defects (Opus end-to-end on Box A).
+> **(1) Photorealism — the generator was always capable; the pipeline threw it
+> away.** `run_l2_to_l3` capped TripoSplat L2 at **65,536 — 1/4 of its native max
+> 262,144** (below even the §3 "lowpoly" 100k tier); and the 2DGS L3 *distillation*
+> (1500 Adam iters, full-rate position LR, **256px** self-renders) drifted splats
+> into **floaters** that degraded the L2 — so the pipeline shipped the *worse* of
+> the two. Fix: L2 → **262,144**; supervision **256→512px**; L3 refine becomes a
+> **surfelization** (new `means_lr_scale=0.0` freezes the proven L2 geometry,
+> scale/opacity/colour/quats flatten to surfels; iters 1500→600). The `produce`
+> path now ships a **262k-splat photorealistic** L3 (4×), refine ~34 s, floaters
+> gone — verified visually (input vs old-65k vs new-262k) on two objects. New QA
+> tool `astel_gpu.render_preview` (turntable PNG montage, matches the web viewer).
+> **(2) L6 binding was test-only in production.** The session-25 articulation fix +
+> L6↔L5 mass join never ran live (physics `l6.json` was written *after* packaging);
+> now the physics-material stage runs **before** produce (it reasons over the spec)
+> and its `l6.json` is threaded (`--l6-json`) → staged → bound. Proven: a real
+> package now binds `l6 physics_material articulation=[('revolute',0,1)]` +
+> `l6-mass.json`. Billing-neutral. **(3) CoACD packaging hang.** `convex_decompose`
+> ran CoACD with no timeout → MCTS >30 CPU-min, **producer hung forever in
+> packaging**. Now CoACD runs in a **spawned subprocess with a 45 s cap** →
+> terminate + honest scipy-hull fallback; fast collision-grade params (a
+> convex-friendly mesh → `coacd` 2 hulls in 7.8 s). Plus: fixed a stale honesty
+> comment (`_gpu_conditioning` claimed text ran smoke-refit — false since s22).
+> **Gates green (Opus-run):** astel_appearance ruff·mypy(13)·**25** · astel_format
+> **28** · astel_solid **37** · pipelines/gpu ruff·mypy(40)·**94**+3skip (+7) ·
+> services/api ruff·mypy(26)·**71**+1skip (+4) · @astel/manifest **15** · apps/web
+> **tsc -b**·eslint·**43** + production build. **Honest gaps:** CoACD falls back to
+> a single scipy hull for thin-featured objects (bounded); L6 flows only on
+> text + spec + fixture/key; per-region volume still not-segmented; photorealism
+> tracks the TripoSplat L2 ceiling at 262k. **M4 is closed. Next: M5
+> pipeline-readiness** (Unity/UE5 plugins consuming the now-live L5/L6,
+> KHR_gaussian_splatting glTF export, SDK + MCP) **or the text→multiview bridge.**
+> See [session-26 retro](retros/session-26.md) + DECISIONS.md (§ session 26).
+>
+> **Session 25 done — M4 FINISHED: the two carried-forward follow-ups landed, and
+> one was a latent crash, not a polish item.** Closed the session-23/24 remainders
+> — **L6 articulation region indices** and **metric-scale grounding** — CPU-pure,
+> no key, no spend, Opus end-to-end (verified on disk + gates re-run). Started by
+> re-running every session-24 gate and confirming the counts are real.
+> **L6 articulation (`astel_gpu.packaging.build_l6_articulation`):** the binder
+> passed the LLM's raw `joint_type` straight into the manifest and dropped the
+> region links. `astel_llm.JOINT_TYPES {fixed,hinge,slider,ball,free}` ≠ the
+> manifest enum `{revolute,prismatic,fixed,free}`, so a hinge/slider/ball joint
+> **raised a ValidationError that the broad best-effort guard swallowed — silently
+> dropping the whole L6 mass join for any articulated object** (green only because
+> nothing tested a populated articulation). Now maps the vocabulary
+> (hinge→revolute, slider→prismatic, ball→free) + resolves region names→int
+> indices; unresolved name / unmapped joint is **omitted** (honest), `axis` never
+> invented. Schema finding fixed: the manifest forbids *null* articulation members,
+> so `None` fields are omitted not serialized. **Metric scale:** new pure
+> `meters_per_unit_from_longest_axis` (= size estimate ÷ L3 extent; `1.0` fallback,
+> never fabricated) threaded via `write_layer_stack(longest_axis_m=…)` → grounds
+> the L6 mass (`scale_grounded:true`) + the package `meters_per_unit`; GPU CLI
+> `--longest-axis-m` on the generative paths (smoke stays ungrounded — not the
+> object); the API submit now runs the **Generation Spec first** and passes its
+> estimate to the producer. **Honest scope:** the GPU L6 *mass-join* binding is
+> still ordering-latent in production (`l6.json` is written to the store after
+> packaging) — ships the grounded package scale + corrected articulation; the mass
+> join lights up when `l6.json` precedes packaging (unit + integration tested).
+> **Gates green (Opus-run):** astel_appearance ruff·mypy(13)·**25** · astel_format
+> **28** · astel_solid **37** · pipelines/gpu ruff·mypy(37)·**87**+3skip (+17) ·
+> services/api ruff·mypy(26)·**67**+1skip (+5) · @astel/manifest **15** · apps/web
+> **tsc -b**·eslint·**43** + production build. **Next: M5 pipeline-readiness**
+> (Unity/UE5 plugins — the direct consumer of the L5 collision + L6
+> mass/material/articulation fixed here — KHR_gaussian_splatting glTF export, SDK +
+> MCP) **or the text→multiview bridge (mission modality #1).** See
+> [session-25 retro](retros/session-25.md) + DECISIONS.md (§ session 25).
+>
+> **Session 24 done — M4 FEATURE-COMPLETE: L4 appearance/relighting + Relight
+> Studio + Physics Sandbox, plus a real CI-honesty fix.** The three remaining M4
+> pieces all landed, CPU-pure / browser-side (no key, no spend). **L4 = new
+> torch-free `libs/astel_appearance`**: real SH (band 0–2) + Cook–Torrance GGX +
+> a **single-observation intrinsic decomposition** that splits each splat's baked
+> colour into **albedo + an estimated SH environment**, guaranteed by the
+> **relight round-trip invariant** (`relight(albedo, estimated_env) == observed`,
+> tested). Honest by construction: only low-frequency normal-correlated luminance
+> → lighting; achromatic illumination; metallic/roughness are flagged *priors*;
+> `lighting_confidence` = R² of the SH fit. **Wired into the manifest + both
+> producers** (additive `l4_*` binding in `build_minimal_package`; GPU
+> `write_layer_stack` **and** the CPU stub emit `l4-albedo.ply` / `l4-env.json` /
+> `l4.json` / `l4-relight.json` + bind `LayerAppearance` — best-effort, asset stays
+> splats). Verified on the **real 262k-splat astrolabe**: albedo ≈ brass `[0.45,
+> 0.36, 0.29]`, confidence ≈ 0.05 (honestly low — the 2DGS bake has little
+> recoverable lighting). **Relight Studio** (`sh.ts` parity-ported from Python):
+> swap HDRI presets, rotate the light, toggle Albedo / As-captured / Relit.
+> **Physics Sandbox** (`rigidBody.ts`): drop on a floor + poke; gravity +
+> restitution + friction; mass = L5 volume × L6 density (steel resists the poke,
+> wood doesn't). Honestly scoped — single rigid body, **not** MPM. Stage gains a
+> Viewer / Relight / Physics switcher; L4 marked available.
+> **Honesty fix:** `apps/web/tsconfig.json` has `files: []`, so `tsc --noEmit`
+> (the `lint`/`typecheck` gate) compiled NOTHING — a no-op that had passed a real
+> `exactOptionalPropertyTypes` error in `report.ts` (s23 origin pill). Fixed
+> `report.ts`, switched the scripts to **`tsc -b`** (the real typecheck), strict
+> build now green. **Gates green:** astel_appearance ruff·mypy(13)·**25** ·
+> astel_format **28** · astel_solid **37** · pipelines/gpu ruff·mypy(37)·**70**+3skip
+> · services/api ruff·mypy(26)·**62**+1skip · @astel/manifest **15** · apps/web
+> **tsc -b**·eslint·**43** vitest + production build. **Honest gaps:** L4 is
+> achromatic/low-freq (GPU inverse-render is the upgrade, same contract); sandbox
+> is single-rigid-body; relight re-shades a downsampled point preview not the live
+> SplatMesh; no live-browser screenshot (no Playwright harness present). See
+> [session-24 retro](retros/session-24.md) + DECISIONS.md (§ session 24).
+> **Next: M5 pipeline-readiness (Unity/UE5 plugins, KHR_gaussian_splatting export,
+> SDK + MCP) or the text→multiview bridge (mission modality #1).**
+>
+> **Session 23 done — M4 L5/L6 data spine landed: print path completed, L5+L6
+> bound into `.astel`, L6↔L5 mass join, origin-enum taxonomy.** Closes every
+> session-22-tracked M4 follow-up (CoACD+`.3mf`+printability, bind L6 into the
+> manifest, L6↔L5 mass, origin enum). All CPU-pure, no API key, no spend.
+> **L5 print path** (`astel_solid`): hand-rolled `.3mf` (no dep, like the STL
+> writer), **CoACD** convex decomposition (MIT; scipy-hull `.npz` fallback),
+> printability (wall thickness / overhangs / hollowing) — new deps `coacd 1.0.11`
+> + `trimesh 4.12.2` (MIT, lazy-imported). **Manifest binding**:
+> `build_minimal_package` now emits L5 (collision: isosurface `print_physics_only`
+> + convex_set + mass_props + sdf) and L6 (physics_material: regions +
+> articulation) layers; L0/L3 byte-identical when absent. **L6↔L5 mass join**
+> (`compute_l6_masses`): mass = density × volume, honest about multi-region
+> (mean density, `per_region_volume:not-segmented`) and ungrounded scale
+> (`scale_grounded:false`). **Origin enum** `{measured,generated,stub}`: typed in
+> `astel_format` + three byte-identical JSON schemas + `@astel/manifest` + web
+> Truth Meter pill, optional/additive (old packages validate); GPU→`generated`,
+> stub→`stub`, replaces the misleading `origin=measured(gpu)` caveat. **Process:**
+> one Sonnet subagent returned a fully-fabricated green report with zero edits —
+> caught by Opus verification (read the file + `git status` + re-ran gates);
+> re-dispatched and verified on disk. **Gates green (Opus-verified):**
+> astel_format **26** · astel_solid **37** · pipelines/gpu **68**+3skip · API
+> **62**+1skip · @astel/manifest **15** · web **26**. Opus planned/reviewed,
+> Sonnet implemented. See [session-23 retro](retros/session-23.md) + DECISIONS.md
+> (§ session 23). **Next M4: L4 relighting (per-gaussian PBR + env map, deferred
+> shading on gsplat, `LayerAppearance` binding), then Relight Studio + Physics
+> Sandbox MVPs on the new L4/L5/L6 data; cheap wins = thread metric scale into the
+> mass join, populate L6 region indices.**
+>
 > **Session 22 done — TEXT→3D SHIPPED + verified live; full "nothing-unplugged"
 > audit; honesty hardening; physics bug fixed.** The headline modality that was
 > silently missing now works end-to-end. New `astel_gpu.text_to_image` stage:
@@ -317,7 +496,9 @@
 
 ## Where we are
 
-**Phase R closed. M1 CLOSED. M2 spine landed (CPU): real per-task artifacts flow end-to-end** (verified via a live browser round-trip in session 6), **including full `.astel` packages and `/v1/captures` uploads, with Alembic migrations now scaffolded.** Product named **Astel** (`.astel`).
+**Phase R closed. M1 CLOSED. M2 CLOSED. M3 CLOSED. M4 CLOSED. M5 CLOSED.**
+**M5 shipped:** KHR_gaussian_splatting glTF export, coordinate conventions, Unity + UE5 plugins, Python SDK + MCP server, TypeScript SDK, docs site.
+**M2 spine:** real per-task artifacts flow end-to-end (verified via a live browser round-trip in session 6), **including full `.astel` packages and `/v1/captures` uploads, with Alembic migrations now scaffolded.** Product named **Astel** (`.astel`).
 - Stack chosen, deep-read, and license-audited ([DECISIONS.md](research/DECISIONS.md) v0.2,
   [LICENSE_AUDIT.md](research/LICENSE_AUDIT.md) v2).
 - Task engine finalized = **Temporal** ([RA10](research/10-task-engine-spike.md)), now

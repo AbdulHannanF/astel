@@ -1,5 +1,14 @@
-/** Shape of the per-asset quality report (Truth Meter source). */
+/**
+ * Origin taxonomy — must stay in sync with the Python schema and
+ * `@astel/manifest` `AssetOrigin` type (three literals, optional/additive).
+ *
+ * - `measured`  = reconstructed from real capture with ground-truth comparison.
+ * - `generated` = generative / self-consistency only, no ground truth.
+ * - `stub`      = deterministic procedural placeholder, not derived from user input.
+ */
+export type AssetOrigin = "measured" | "generated" | "stub";
 
+/** Shape of the per-asset quality report (Truth Meter source). */
 export interface QualityReport {
   asset_id: string;
   name: string;
@@ -25,13 +34,13 @@ export interface QualityReport {
     note: string;
   };
   /**
-   * Honesty marker (CLAUDE.md §1.3). When set and not `"measured"`, the Truth
-   * Meter MUST visibly flag the numbers as illustrative/stub, never as
-   * measured fact. Absent on the static sample (treated as non-stub).
+   * Typed origin taxonomy (CLAUDE.md §1.3 honesty contract). When set and not
+   * `"measured"`, the Truth Meter MUST visibly flag the numbers as
+   * illustrative/not-ground-truth. Optional/additive: absent on older packages.
    */
-  origin?: string;
+  origin?: AssetOrigin;
   /** First caveat string from the API report, if any, shown alongside the
-   * stub indicator. */
+   * origin indicator. */
   caveat?: string | null;
 }
 
@@ -48,7 +57,7 @@ export async function fetchSampleReport(
 /** Shape of `GET /v1/generations/{taskId}/artifacts/quality-report.json`. */
 export interface ApiQualityReport {
   schema: string;
-  origin: string;
+  origin: AssetOrigin | string;
   modality: string;
   splats: number;
   geometric_error: {
@@ -73,6 +82,17 @@ export interface ApiQualityReport {
   caveats: string[];
 }
 
+/** Known origin values from the API; anything else is treated as absent. */
+const KNOWN_ORIGINS: ReadonlySet<AssetOrigin> = new Set<AssetOrigin>([
+  "measured",
+  "generated",
+  "stub",
+]);
+
+function parseOrigin(raw: string): AssetOrigin | undefined {
+  return KNOWN_ORIGINS.has(raw as AssetOrigin) ? (raw as AssetOrigin) : undefined;
+}
+
 /**
  * Map the live API quality report onto the {@link QualityReport} shape the
  * Truth Meter renders. See CLAUDE.md task brief for the field mapping.
@@ -81,6 +101,9 @@ export function mapApiReport(
   api: ApiQualityReport,
   assetId: string,
 ): QualityReport {
+  // `origin` is an optional field under exactOptionalPropertyTypes, so only
+  // include the key when it resolves to a known value (never assign undefined).
+  const origin = parseOrigin(api.origin);
   return {
     asset_id: assetId,
     name: `Generation ${assetId}`,
@@ -105,7 +128,7 @@ export function mapApiReport(
       generated_ratio: api.provenance.generated_ratio,
       note: api.caveats[0] ?? "",
     },
-    origin: api.origin,
+    ...(origin !== undefined ? { origin } : {}),
     caveat: api.caveats[0] ?? null,
   };
 }

@@ -1,0 +1,15 @@
+{
+  "schema": "astel.gallery/v0",
+  "assets": [
+    {
+      "id": "astel-sample-torusknot",
+      "name": "Reference Torus Knot",
+      "modality": "generated",
+      "blurb": "Bundled reference asset — fully synthetic. Capture-path assets report a real measured ratio in their quality report.",
+      "splatUrl": "/samples/astel-sample.ply",
+      "reportUrl": "/samples/astel-sample.report.json",
+      "reportKind": "sample",
+      "relightUrl": "/samples/astrolabe.relight.json"
+    }
+  ]
+}

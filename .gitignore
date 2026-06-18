@@ -72,3 +72,35 @@ Thumbs.db
 .claude/
 node_modules/
 
+# --- 2026-06-19: web site + engine plugins + coverage ---
+
+# Test coverage reports (vitest / pytest-cov)
+coverage/
+htmlcov/
+
+# Repo-root generated GPU scratch/showcase (per-run render PNGs, l3.ply, etc.).
+# Regenerable output, not source — promote any curated asset into
+# apps/web/public/samples/ instead. Delete this line if you mean to commit them.
+/samples/
+
+# Gallery splat assets served by the web app live in subfolders; re-include them
+# past the global *.ply/*.spz/*.sog ban above so the gallery corpus is committed.
+!apps/web/public/samples/gallery/**/*.ply
+!apps/web/public/samples/gallery/**/*.spz
+!apps/web/public/samples/gallery/**/*.sog
+
+# Unity package — keep the source under plugins/unity/, drop Unity-generated dirs
+plugins/unity/**/[Ll]ibrary/
+plugins/unity/**/[Tt]emp/
+plugins/unity/**/[Oo]bj/
+plugins/unity/**/[Bb]uild/
+plugins/unity/**/[Ll]ogs/
+plugins/unity/**/*.csproj
+plugins/unity/**/*.sln
+
+# Unreal plugin — keep AstelPlugin/Source + *.uplugin, drop UE-generated dirs
+plugins/unreal/**/[Bb]inaries/
+plugins/unreal/**/[Ii]ntermediate/
+plugins/unreal/**/[Ss]aved/
+plugins/unreal/**/DerivedDataCache/
+

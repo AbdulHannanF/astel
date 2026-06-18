@@ -44,8 +44,24 @@ from .l3_refine import DEFAULT_LAMBDA_NORMAL, optimize_2dgs, render_2dgs_colors
 from .smoke_refit import RenderInputs, render_views
 
 DEFAULT_N_VIEWS = 24
-DEFAULT_IMAGE_SIZE = 256
-DEFAULT_REFINE_ITERS = 1500
+#: Distillation supervision resolution. Raised 256 -> 512: at 256px a 262k-splat
+#: cloud is starved of detail to fit (the target only has 256^2 pixels), so the
+#: surfels can't learn fine structure. 512px lets the high-count L3 reproduce the
+#: generator's wing-vein / fine-detail appearance (measured visual gain).
+DEFAULT_IMAGE_SIZE = 512
+#: Native generator budget. TripoSplat supports 32768..262144 (``_NUM_GAUSSIANS_MAX``)
+#: and its own examples use 262144; we previously capped at 65536 (1/4 the budget),
+#: which is below even the CLAUDE.md §3 "lowpoly-splat" (100k) tier. 262144 is the
+#: generator's native max and is decisively sharper (measured).
+DEFAULT_NUM_GAUSSIANS = 262144
+DEFAULT_REFINE_ITERS = 600
+#: Position-LR scale for the generative L3 refine. The TripoSplat L2 init is
+#: already a clean, high-count, on-surface cloud; full-rate position steps for
+#: 1500 iters drift splats into floaters that degrade the asset and inflate its
+#: radius. ``0.0`` freezes positions, turning L3 into a *surfelization* of the
+#: proven L2 geometry (scales/opacity/colour/quats still adapt). See
+#: :func:`astel_gpu.l3_refine.optimize_2dgs`.
+DEFAULT_MEANS_LR_SCALE = 0.0
 DEFAULT_HOLDOUT_EVERY = 6
 
 
@@ -146,7 +162,7 @@ class L2L3Result:
 def run_l2_to_l3(
     image_path: str | Path,
     *,
-    num_gaussians: int = 65536,
+    num_gaussians: int = DEFAULT_NUM_GAUSSIANS,
     steps: int = 20,
     seed: int = 0,
     n_views: int = DEFAULT_N_VIEWS,
@@ -155,6 +171,7 @@ def run_l2_to_l3(
     holdout_every: int = DEFAULT_HOLDOUT_EVERY,
     lambda_normal: float = DEFAULT_LAMBDA_NORMAL,
     lambda_dist: float = 0.0,
+    means_lr_scale: float = DEFAULT_MEANS_LR_SCALE,
     device_str: str | None = None,
 ) -> L2L3Result:
     """image -> TripoSplat L2 -> normalise -> render orbit -> 2DGS L3 distillation."""
@@ -200,6 +217,7 @@ def run_l2_to_l3(
         spatial_lr_scale=1.0,
         lambda_normal=lambda_normal,
         lambda_dist=lambda_dist,
+        means_lr_scale=means_lr_scale,
     )
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -227,6 +245,7 @@ def run_l2_to_l3(
         "refine_iters": refine_iters,
         "lambda_normal": lambda_normal,
         "lambda_dist": lambda_dist,
+        "means_lr_scale": means_lr_scale,
         "refine_wall_time_s": refine_time_s,
         "peak_vram_gb": peak_vram_gb,
         "image_used": str(image_path),
@@ -246,7 +265,7 @@ def run_l2_to_l3(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, required=True)
-    parser.add_argument("--num-gaussians", type=int, default=65536)
+    parser.add_argument("--num-gaussians", type=int, default=DEFAULT_NUM_GAUSSIANS)
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-views", type=int, default=DEFAULT_N_VIEWS)
@@ -254,6 +273,9 @@ def main() -> None:
     parser.add_argument("--refine-iters", type=int, default=DEFAULT_REFINE_ITERS)
     parser.add_argument("--lambda-normal", type=float, default=DEFAULT_LAMBDA_NORMAL)
     parser.add_argument("--lambda-dist", type=float, default=0.0)
+    parser.add_argument(
+        "--means-lr-scale", type=float, default=DEFAULT_MEANS_LR_SCALE
+    )
     parser.add_argument("--out", type=Path, default=Path("out_generative"))
     args = parser.parse_args()
 
@@ -267,6 +289,7 @@ def main() -> None:
         refine_iters=args.refine_iters,
         lambda_normal=args.lambda_normal,
         lambda_dist=args.lambda_dist,
+        means_lr_scale=args.means_lr_scale,
     )
 
     args.out.mkdir(parents=True, exist_ok=True)

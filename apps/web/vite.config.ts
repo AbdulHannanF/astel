@@ -12,6 +12,8 @@ export default defineConfig({
     proxy: {
       "/v1": { target: API_TARGET, changeOrigin: true },
       "/healthz": { target: API_TARGET, changeOrigin: true },
+      "/openapi.json": { target: API_TARGET, changeOrigin: true },
+      "/docs": { target: API_TARGET, changeOrigin: true },
     },
   },
   test: {

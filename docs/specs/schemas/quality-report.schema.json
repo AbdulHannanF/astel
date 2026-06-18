@@ -82,6 +82,11 @@
       "description": "Free-text honesty notes surfaced in the UI (e.g. 'back face unseen; completed by prior').",
       "type": "array",
       "items": { "type": "string" }
+    },
+    "origin": {
+      "description": "How this asset was produced. 'measured' = real-capture path with ground-truth geometry; 'generated' = generative/GPU path; 'stub' = procedural placeholder. Absent means unknown/legacy.",
+      "type": "string",
+      "enum": ["measured", "generated", "stub"]
     }
   }
 }

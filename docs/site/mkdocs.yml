@@ -1,0 +1,61 @@
+site_name: Astel Docs
+site_description: Astel — layered Gaussian splat generation for games, VFX, and 3D printing.
+site_url: https://astel.ai/docs
+repo_url: https://github.com/astel-ai/astel
+repo_name: astel-ai/astel
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+
+nav:
+  - Home: index.md
+  - Getting started:
+    - Self-host guide: self-host.md
+    - Hardware requirements: hardware.md
+  - Concepts:
+    - Splats 101 for studios: splats-101.md
+    - Layered asset model: layer-model.md
+    - Truth Meter: truth-meter.md
+  - Integrations:
+    - Coordinate conventions: coordinate-conventions.md
+    - Unity plugin: unity-plugin.md
+    - Unreal Engine 5 plugin: ue5-plugin.md
+    - glTF export: gltf-export.md
+  - API reference: api-reference.md
+  - SDK:
+    - Python SDK: sdk-python.md
+    - TypeScript SDK: sdk-ts.md
+    - MCP server: mcp-server.md
+  - Architecture: architecture.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list

@@ -1,0 +1,156 @@
+.relight {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(120% 90% at 50% 0%, oklch(20% 0.01 72) 0%, var(--ink-0) 70%);
+}
+
+.relight-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.relight-overlay {
+  position: absolute;
+  display: flex;
+  gap: var(--space-xs);
+  z-index: var(--z-overlay);
+  pointer-events: none;
+}
+
+.relight-top {
+  top: var(--space-md);
+  left: var(--space-md);
+  right: var(--space-md);
+  align-items: center;
+}
+
+.relight-center {
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mid);
+}
+
+.relight-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.3em 0.7em;
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  background: oklch(18% 0.009 71 / 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+}
+.relight-chip b {
+  color: var(--accent-bright);
+}
+
+.relight-panel {
+  position: absolute;
+  left: var(--space-md);
+  bottom: var(--space-md);
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  width: min(320px, calc(100% - 2 * var(--space-md)));
+  background: oklch(16% 0.008 70 / 0.82);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+
+.relight-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.relight-label {
+  font-size: var(--text-xs);
+  color: var(--text-lo);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.relight-seg {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.relight-seg button {
+  flex: 1 1 auto;
+  padding: 0.4em 0.5em;
+  font-size: var(--text-xs);
+  color: var(--text-mid);
+  background: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  transition: all var(--dur-fast) var(--ease-out-quart);
+}
+.relight-seg button:hover:not(:disabled) {
+  background: var(--ink-4);
+}
+.relight-seg button.active {
+  color: var(--ink-0);
+  background: var(--accent);
+  border-color: var(--accent-bright);
+  font-weight: 600;
+}
+.relight-seg button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.relight-group input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.relight-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.relight-error {
+  max-width: 320px;
+  text-align: center;
+  padding: var(--space-lg);
+  background: oklch(16% 0.008 70 / 0.9);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.relight-error h3 {
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-base);
+}
+.relight-error p {
+  margin: var(--space-2xs) 0;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.relight .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: relight-spin 0.8s linear infinite;
+  margin-right: var(--space-xs);
+}
+@keyframes relight-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

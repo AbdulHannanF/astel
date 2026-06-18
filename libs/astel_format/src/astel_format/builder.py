@@ -23,7 +23,12 @@ from astel_format.models import (
     CoordinateSystem,
     FileRef,
     Generator,
+    LayerAppearance,
+    LayerArticulation,
+    LayerCollision,
     LayerEntry,
+    LayerIsosurface,
+    LayerPhysicsMaterial,
     Layers,
     Manifest,
     ProvenanceChannel,
@@ -87,6 +92,11 @@ def build_minimal_package(
     l0_ply_path: str | Path | None = None,
     l0_count: int | None = None,
     l0_provenance: Sequence[float] | None = None,
+    # L4 appearance / lighting layer (optional; emit only when an env or albedo
+    # path is provided)
+    l4_env_path: str | Path | None = None,
+    l4_albedo_path: str | Path | None = None,
+    l4_summary_path: str | Path | None = None,
     meters_per_unit: float = 1.0,
     handedness: str = "right",
     up_axis: CoordAxis = "+Y",
@@ -97,8 +107,17 @@ def build_minimal_package(
     asset_name: str | None = None,
     prompt: str | None = None,
     seed: int | None = None,
+    # L5 collision / solidity layer (all optional; emit the layer only when
+    # at least l5_isosurface_path is provided)
+    l5_isosurface_path: str | Path | None = None,
+    l5_convex_set_path: str | Path | None = None,
+    l5_mass_props_path: str | Path | None = None,
+    l5_sdf_path: str | Path | None = None,
+    # L6 physics-material layer (optional; emit only when l6_regions_path given)
+    l6_regions_path: str | Path | None = None,
+    l6_articulation: list[LayerArticulation] | None = None,
 ) -> AstelPackage:
-    """Build a minimal valid :class:`AstelPackage` from L3 (+ optional L0).
+    """Build a minimal valid :class:`AstelPackage` from L3 (+ optional L0/L5/L6).
 
     Parameters
     ----------
@@ -119,6 +138,31 @@ def build_minimal_package(
     l0_ply_path, l0_count, l0_provenance:
         Optional L0 seed point cloud + its provenance buffer. All three must
         be provided together or not at all.
+    l4_env_path:
+        Optional path to the estimated SH environment JSON (``l4-env.json``).
+        When provided (or ``l4_albedo_path``), an L4 appearance layer is
+        emitted with ``LayerAppearance(bound_to="l3")``.
+    l4_albedo_path:
+        Optional path to the albedo / baked-PBR splat ``.ply`` (the un-lit
+        base colour for engines that consume coloured splats).
+    l4_summary_path:
+        Optional path to the L4 summary JSON (method + confidence + notes).
+    l5_isosurface_path:
+        Optional path to the watertight surface file (.stl or .3mf). When
+        provided, an L5 collision layer is emitted with
+        ``LayerIsosurface(print_physics_only=True)``.
+    l5_convex_set_path:
+        Optional path to the convex decomposition file (.glb or .npz).
+    l5_mass_props_path:
+        Optional path to the mass properties JSON file.
+    l5_sdf_path:
+        Optional path to the SDF volume file.
+    l6_regions_path:
+        Optional path to the physics-material regions JSON (``l6.json``).
+        When provided, an L6 physics-material layer is emitted.
+    l6_articulation:
+        Optional list of :class:`LayerArticulation` entries describing
+        separable joints between regions.
     """
     if len(l3_provenance) != l3_count:
         raise ValueError(
@@ -222,6 +266,149 @@ def build_minimal_package(
     layers_kwargs: dict[str, object] = {"l3": l3_layer}
     if l0_layer is not None:
         layers_kwargs["l0"] = l0_layer
+
+    # --- L4 appearance / lighting layer ---
+    # Emitted when an estimated environment and/or albedo (baked-PBR) artifact
+    # is provided. The asset stays splats; L4 binds per-splat material +
+    # separated illumination so engines/relight can re-shade (CLAUDE.md §3 L4).
+    if l4_env_path is not None or l4_albedo_path is not None:
+        l4_file_refs: list[FileRef] = []
+        appearance_kwargs: dict[str, object] = {"bound_to": "l3"}
+
+        if l4_env_path is not None:
+            l4_env = Path(l4_env_path)
+            l4_env_pkg_path = f"layers/l4_appearance/{l4_env.name}"
+            files[l4_env_pkg_path] = l4_env.read_bytes()
+            l4_file_refs.append(
+                FileRef(path=l4_env_pkg_path, role="env_map", format="json")
+            )
+            appearance_kwargs["env_map_path"] = l4_env_pkg_path
+
+        if l4_albedo_path is not None:
+            l4_albedo = Path(l4_albedo_path)
+            l4_albedo_pkg_path = f"layers/l4_appearance/{l4_albedo.name}"
+            files[l4_albedo_pkg_path] = l4_albedo.read_bytes()
+            l4_file_refs.append(
+                FileRef(
+                    path=l4_albedo_pkg_path,
+                    role="baked_preview",
+                    format="ply",
+                    derived=True,
+                )
+            )
+            appearance_kwargs["baked_pbr_path"] = l4_albedo_pkg_path
+
+        if l4_summary_path is not None:
+            l4_summary = Path(l4_summary_path)
+            l4_summary_pkg_path = f"layers/l4_appearance/{l4_summary.name}"
+            files[l4_summary_pkg_path] = l4_summary.read_bytes()
+            l4_file_refs.append(
+                FileRef(path=l4_summary_pkg_path, role="auxiliary", format="json")
+            )
+
+        layers_kwargs["l4"] = LayerEntry(
+            kind="appearance",
+            status="present",
+            derived_from=["l3"],
+            appearance=LayerAppearance.model_validate(appearance_kwargs),
+            files=l4_file_refs,
+        )
+
+    # --- L5 collision layer ---
+    if l5_isosurface_path is not None:
+        l5_iso_path = Path(l5_isosurface_path)
+        ext = l5_iso_path.suffix.lstrip(".").lower()
+        iso_format = ext if ext in ("stl", "3mf") else "stl"
+        l5_iso_pkg_path = f"layers/l5_collision/{l5_iso_path.name}"
+        files[l5_iso_pkg_path] = l5_iso_path.read_bytes()
+
+        l5_file_refs: list[FileRef] = [
+            FileRef(
+                path=l5_iso_pkg_path,
+                role="isosurface",
+                format=iso_format,  # type: ignore[arg-type]
+            )
+        ]
+
+        iso_entry = LayerIsosurface(path=l5_iso_pkg_path, print_physics_only=True)
+        collision_kwargs: dict[str, object] = {"isosurface": iso_entry}
+
+        if l5_convex_set_path is not None:
+            l5_convex = Path(l5_convex_set_path)
+            cext = l5_convex.suffix.lstrip(".").lower()
+            convex_fmt = cext if cext in ("glb", "npz") else "glb"
+            l5_convex_pkg_path = f"layers/l5_collision/{l5_convex.name}"
+            files[l5_convex_pkg_path] = l5_convex.read_bytes()
+            l5_file_refs.append(
+                FileRef(
+                    path=l5_convex_pkg_path,
+                    role="convex_set",
+                    format=convex_fmt,  # type: ignore[arg-type]
+                )
+            )
+            collision_kwargs["convex_set_path"] = l5_convex_pkg_path
+
+        if l5_mass_props_path is not None:
+            l5_mass = Path(l5_mass_props_path)
+            l5_mass_pkg_path = f"layers/l5_collision/{l5_mass.name}"
+            files[l5_mass_pkg_path] = l5_mass.read_bytes()
+            l5_file_refs.append(
+                FileRef(
+                    path=l5_mass_pkg_path,
+                    role="mass_props",
+                    format="json",
+                )
+            )
+            collision_kwargs["mass_props_path"] = l5_mass_pkg_path
+
+        if l5_sdf_path is not None:
+            l5_sdf = Path(l5_sdf_path)
+            l5_sdf_pkg_path = f"layers/l5_collision/{l5_sdf.name}"
+            files[l5_sdf_pkg_path] = l5_sdf.read_bytes()
+            l5_file_refs.append(
+                FileRef(
+                    path=l5_sdf_pkg_path,
+                    role="sdf",
+                    format="npz",
+                )
+            )
+            collision_kwargs["sdf_path"] = l5_sdf_pkg_path
+
+        l5_layer = LayerEntry(
+            kind="collision",
+            status="present",
+            derived_from=["l3"],
+            collision=LayerCollision.model_validate(collision_kwargs),
+            files=l5_file_refs,
+        )
+        layers_kwargs["l5"] = l5_layer
+
+    # --- L6 physics-material layer ---
+    if l6_regions_path is not None:
+        l6_reg = Path(l6_regions_path)
+        l6_reg_pkg_path = f"layers/l6_physics/{l6_reg.name}"
+        files[l6_reg_pkg_path] = l6_reg.read_bytes()
+
+        l6_file_refs: list[FileRef] = [
+            FileRef(
+                path=l6_reg_pkg_path,
+                role="regions",
+                format="json",
+            )
+        ]
+
+        pm_kwargs: dict[str, object] = {"regions_path": l6_reg_pkg_path}
+        if l6_articulation:
+            pm_kwargs["articulation"] = l6_articulation
+        pm = LayerPhysicsMaterial.model_validate(pm_kwargs)
+        l6_layer = LayerEntry(
+            kind="physics_material",
+            status="present",
+            derived_from=["l3"],
+            physics_material=pm,
+            files=l6_file_refs,
+        )
+        layers_kwargs["l6"] = l6_layer
 
     manifest = Manifest(
         format_version="0.1.0",
