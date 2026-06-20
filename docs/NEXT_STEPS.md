@@ -1,5 +1,72 @@
-# NEXT_STEPS — Runway (updated 2026-06-18, end of session 27)
+# NEXT_STEPS — Runway (updated 2026-06-19, post-M6 verification + CI pass)
 
+> **Post-M6 verification & hardening pass (2026-06-19) — M0–M6 RE-VERIFIED GREEN;
+> docs corrected; files cleaned; CI wired.** Opus re-ran every gate by hand (no
+> summary trusted): **9 libs 342** (appearance 25 · dynamics 40 · eval 36 · format
+> 34 · llm 24 · lod 53 · scene 56 · solid 37 · splat_io 37) · **pipelines/gpu
+> 112**+3skip · **services/api 71**+1skip · **apps/web 72** vitest + eslint + tsc-b
+> · **@astel/manifest 15** · **@astel/sdk 9** · **astel-sdk(py) 11** · loadtest
+> self-test — all ruff + mypy --strict clean. The retro counts are honest.
+> **Fake/unplugged audit: clean** — explicit `NotImplementedError` + documented
+> caveats where work is deferred (SOG shN, GOF runner-up), real anti-fabrication
+> test assertions (dynamics asserts incompressible-motion error is *larger* than the
+> bend), no silent stubs beyond the documented honest gaps. **One precision
+> finding:** an uploaded **video** through the API still yields the honest
+> render-then-refit placeholder (`conditioning:"none"`), NOT a reconstruction —
+> `_produce_video`'s real static-recon path is CLI-only (the API doesn't
+> extract/pass a frame); corrected the LAUNCH_CHECKLIST overstatement.
+> **Docs corrected to match the app:** README (was stale at "M4 in progress /
+> text→3D not built"), MVP_TESTING gate table + `tsc -b`, docs-site (created the 5
+> missing nav pages → `mkdocs build --strict` clean; replaced the fake
+> `pip install astel-sdk` / `astel-api` quickstart), ARCHITECTURE M1-baseline banner.
+> **Cleaned:** stale git worktree + dangling branch `worktree-agent-…`, empty
+> `experiments/`. **CI WIRED (roadmap N1):** `.github/workflows/ci.yml` (CPU gates:
+> 9 libs · api · sdk-python · loadtest · web + TS) + `gpu.yml` (self-hosted CUDA,
+> manual) — authored + YAML-valid, mirrors the manual gates, **not yet executed on
+> a remote** (repo is local-only). **Next: push to a GitHub remote to activate CI +
+> confirm first green; then N2 (security hardening), G1 (real 4DGS video).**
+>
+> **Session 29 done — M6 IMPLEMENTED: the FINAL milestone. L7 dynamics core,
+> scene seeds, LOD streaming, and a hardening/security/launch pass. The build
+> plan (§9, M0–M6) is now complete.** Opus planned/verified; Sonnet implemented;
+> Haiku did the mechanical doc. Every subagent report re-verified on disk + by
+> re-running gates (no summary trusted).
+> **L7 dynamics (`libs/astel_dynamics`, 40 tests):** torch-free affine-LBS
+> deformation field (farthest-point nodes + RBF weights + per-frame weighted-LS
+> affine), **validated vs analytic ground truth** (rigid 1.6e-8, bend 1.5%,
+> incompressible random 9.0% of scale — honest residual, ≥5× the bend). Binary
+> `.bin` pack (size-validated), `Timeline`, baked-per-frame. **Bound into
+> `.astel`** (astel_format builder +7 tests; `LayerDynamics` `dynamics` layer,
+> byte-identical when absent). Producer `write_dynamics_layer` +
+> `write_layer_stack` L7 params. **Video honesty fix:** `_produce_video` runs a
+> REAL static reconstruction (honest "L7/4DGS not tracked" note) instead of the
+> silent smoke alias — **no fabricated motion**. Real per-frame 4DGS fit = the
+> deferred GPU stage (roadmap G1), already wired to receive it.
+> **Scene seeds (`libs/astel_scene`, 56 tests):** multi-object layout schema
+> (`astel.scene-layout/v0`) + ground-contact (1st-pct drop) + greedy XZ-AABB
+> no-overlap composition on raw numpy gaussian arrays; layout-LLM stage reuses the
+> offline `FixtureAdapter` (no key, no spend).
+> **LOD (`libs/astel_lod`, 53 tests):** importance = opacity·exp(Σlog_scales);
+> **nested-subset guarantee** (one global sort → top-k ⊂ top-K); TIER + PLATFORM
+> budgets. Producer emits `l3.lod.json` + tier PLYs; web `lod.ts` consumer (20
+> vitest).
+> **Hardening:** `read_deformation_bin` size-validated vs malicious/truncated
+> `.astel` (+2 adversarial tests); async load-test harness `tools/loadtest`
+> (ruff·mypy·self-test, not run e2e); `docs/LAUNCH_CHECKLIST.md` (honest [x]/[ ] +
+> P0/P1/P2). **Honest finding: there is NO `.github/` CI — gates are manual; that
+> is the top launch blocker.**
+> **Gates green (Opus end-of-M6 sweep):** 8 Python libs **318** (dynamics 40 ·
+> scene 56 · lod 53 · format 34 · splat_io 37 · appearance 25 · solid 37 · eval
+> 36) · pipelines/gpu **112**+3skip · services/api **71**+1skip · apps/web **72**
+> vitest·tsc-b·eslint · @astel/manifest + @astel/sdk green · tools/loadtest
+> ruff·mypy.
+> **The build plan is complete through M6 (its last milestone). Next = post-M6,
+> three tracks: N (launch — CI first, then security/deploy/monitoring), G (GPU-real
+> — real 4DGS video L7, text→multiview, live LOD/scene wiring), T (fine-tuning,
+> founder-gated on telemetry + cost).** Plan: [18-post-m6-roadmap](research/18-post-m6-roadmap.md);
+> see [session-29 retro](retros/session-29.md) + DECISIONS.md (§ session 29).
+> **Single recommended next step: wire CI (roadmap N1).**
+>
 > **Session 27 done — M5 CLOSED: KHR_gaussian_splatting glTF/GLB export,
 > coordinate-convention module, Unity + UE5 engine plugins, Python SDK + MCP server,
 > TypeScript SDK, docs site.** All gates green.
@@ -496,7 +563,8 @@
 
 ## Where we are
 
-**Phase R closed. M1 CLOSED. M2 CLOSED. M3 CLOSED. M4 CLOSED. M5 CLOSED.**
+**Phase R closed. M1 CLOSED. M2 CLOSED. M3 CLOSED. M4 CLOSED. M5 CLOSED. M6 IMPLEMENTED — build plan complete (M0–M6).**
+**M6 implemented (s29):** L7 dynamics core (affine-LBS field, analytic-GT validated, bound into `.astel`), scene-seeds core (layout + composition + offline layout-LLM), LOD streaming (tiering + budgets + producer + web consumer), and a hardening/security/launch pass. Real 4DGS video fit, live LOD/scene wiring, CI/deploy are post-M6 ([18-post-m6-roadmap](research/18-post-m6-roadmap.md)).
 **M5 shipped:** KHR_gaussian_splatting glTF export, coordinate conventions, Unity + UE5 plugins, Python SDK + MCP server, TypeScript SDK, docs site.
 **M2 spine:** real per-task artifacts flow end-to-end (verified via a live browser round-trip in session 6), **including full `.astel` packages and `/v1/captures` uploads, with Alembic migrations now scaffolded.** Product named **Astel** (`.astel`).
 - Stack chosen, deep-read, and license-audited ([DECISIONS.md](research/DECISIONS.md) v0.2,

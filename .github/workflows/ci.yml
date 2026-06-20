@@ -1,0 +1,113 @@
+name: CI
+
+# Runs the same gates that were previously run by hand (see README "Running the
+# gates" and docs/MVP_TESTING.md). Covers every CPU-runnable component: the 9
+# torch-free Python libs, the API, the Python SDK, the load-test tool, the web
+# app, and the TS packages.
+#
+# pipelines/gpu is intentionally NOT run here: it pins torch/torchvision to the
+# CUDA 12.8 wheel index and depends on gsplat (CUDA kernels), so it cannot build
+# on a GitHub-hosted runner. Its gates run on a self-hosted CUDA runner via
+# .github/workflows/gpu.yml (manual / Box A).
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python-libs:
+    name: lib ${{ matrix.lib }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lib:
+          - astel_appearance
+          - astel_dynamics
+          - astel_eval
+          - astel_format
+          - astel_llm
+          - astel_lod
+          - astel_scene
+          - astel_solid
+          - astel_splat_io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: ruff
+        run: uv run --directory libs/${{ matrix.lib }} ruff check .
+      - name: mypy --strict
+        run: uv run --directory libs/${{ matrix.lib }} mypy
+      - name: pytest
+        run: uv run --directory libs/${{ matrix.lib }} pytest -q
+
+  api:
+    name: services/api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv run --directory services/api ruff check .
+      - run: uv run --directory services/api mypy
+      - run: uv run --directory services/api pytest -q
+
+  sdk-python:
+    name: packages/sdk-python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv run --directory packages/sdk-python ruff check .
+      - run: uv run --directory packages/sdk-python mypy
+      - run: uv run --directory packages/sdk-python pytest -q
+
+  loadtest:
+    name: tools/loadtest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv run --directory tools/loadtest ruff check .
+      - run: uv run --directory tools/loadtest mypy
+      - run: uv run --directory tools/loadtest python load_test.py --self-test
+
+  web-and-ts:
+    name: web + TS packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: web (eslint + tsc -b + vitest)
+        run: |
+          pnpm -C apps/web run lint
+          pnpm -C apps/web test
+      - name: "@astel/manifest (vitest + build)"
+        run: |
+          pnpm -C packages/manifest test
+          pnpm -C packages/manifest run build
+      - name: "@astel/sdk (vitest + build)"
+        run: |
+          pnpm -C packages/sdk-ts test
+          pnpm -C packages/sdk-ts run build

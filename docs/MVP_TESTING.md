@@ -1,11 +1,11 @@
-# MVP Testing Guide (end of M3)
+# MVP Testing Guide (build plan M0–M6 complete)
 
 > **Read this first if you want to test what Astel can do today.** It answers
 > the one question that matters for a hands-on test: *"If I type a text prompt,
 > do I get a model of what I described?"* — and tells you how to drive each path.
 
-_Last verified: 2026-06-15 (session 22). Text→model verified live on Box A. All
-gates green — see [§ Gates](#gates)._
+_Gate counts last re-verified: 2026-06-19 (session 29, end of M6). Text→model
+verified live on Box A (session 22). All gates green — see [§ Gates](#gates)._
 
 ---
 
@@ -18,7 +18,7 @@ verified end-to-end:
 |---|---|---|
 | **Text** prompt | A **real generated 3D Gaussian asset** of what you described (text → SDXL/FLUX reference image → TripoSplat L2 → 2DGS L3), incl. the intermediate `text-reference.png` you can inspect | ✅ **Yes** — on the GPU box (`ASTEL_PRODUCER=gpu`). On the CPU stub it's still a placeholder. |
 | **Single image** | A **real generated 3D Gaussian asset** of the object in the image (image → TripoSplat L2 → 2DGS L3) | ✅ **Yes** — on the GPU box. |
-| **Video** | Placeholder preview only (the upload is stored, not yet reconstructed) | ❌ Not wired (M6). Flagged `conditioning: "none"`. |
+| **Video** | Placeholder preview only (the upload is stored, not yet reconstructed) | ❌ Not wired through the product. M6 added a CLI static-reconstruction path (`_produce_video`, runs when handed a frame), but the API does not yet extract/pass a video frame, so an uploaded video still yields the placeholder, flagged `conditioning: "none"`. End-to-end video recon = roadmap G1. |
 
 **How text→3D works:** your prompt is wrapped into a single-object studio-shot
 prompt → a local text-to-image model renders a reference image → TripoSplat
@@ -41,11 +41,7 @@ real generated models, use the GPU box per §2.
 
 ---
 
-## 1. Run the app (CPU, default — works on any box)
-
-This is the full product surface with the **stub** producer. Good for testing
-the UI, the layer inspector, the Truth Meter honesty channel, SSE progress, and
-the billing/credit ledger. The geometry is the procedural placeholder.
+## 1. Run the app — one command
 
 ```powershell
 # from the repo root
@@ -54,33 +50,35 @@ pnpm run up           # boots API (FastAPI) + web (Vite) together
 # open http://localhost:5173
 ```
 
-- Type anything in the **Text** tab → Generate → watch L0→L3 stream → the
-  viewer loads the per-task `l3.ply`, the Truth Meter shows a **STUB** pill and
-  a caveat saying the geometry is a placeholder, and the credit ledger prices
-  the run (preview vs refine).
-- The dock now shows an honest one-line hint under each modality tab telling you
+`pnpm run up` **auto-detects the GPU**: on the 2×4090 box (nvidia-smi +
+`pipelines/gpu/.venv` + `run-python.cmd` all present) it runs the **real
+generative producer** (`ASTEL_PRODUCER=gpu`), so every Text/Image generation is
+a real, prompt-conditioned splat. On a box with no GPU it falls back to the CPU
+**stub** (procedural placeholder geometry) — good for exercising the UI, layer
+inspector, Truth Meter, SSE progress, and billing without a GPU. Force either
+path with `pnpm run up -- -Gpu` or `pnpm run up -- -Stub`.
+
+Generation is **asynchronous**: clicking Generate returns immediately and the
+Layer Stack streams **real** per-stage progress over SSE while the job runs in
+the background (no blocked request, no fake replay). When it finishes the viewer
+loads the per-task `l3.ply` and the Truth Meter shows the honest origin pill
+(**GENERATED** on the GPU path, **STUB** on the CPU fallback) with provenance
+and caveats; the credit ledger prices the run (preview vs refine).
+
+- The dock shows an honest one-line hint under each modality tab telling you
   what that input actually produces today.
+- `pnpm run up -- -Temporal` uses the durable Temporal engine instead of the
+  in-process async job engine (optional; needs the Temporal dev server).
+- `pnpm run up -- -BindHost 0.0.0.0` exposes the stack on the LAN so a laptop can
+  drive generation on this box's 4090s — see
+  [REMOTE_ACCESS.md](REMOTE_ACCESS.md).
 
-`pnpm run up -Temporal` uses the durable Temporal engine instead of the
-in-process stub engine (optional; needs the Temporal dev server).
+## 2. The real generative path, by hand (GPU box, `THREADRIPPER-48`)
 
-## 2. Run the **real** generative path: image → 3D (GPU box, `THREADRIPPER-48`)
-
-This produces a genuine generated Gaussian asset from a single image.
-
-```powershell
-# 1) point the API at the GPU producer (subprocess; keeps torch out of the API env)
-$env:ASTEL_PRODUCER = "gpu"
-pnpm run up
-
-# 2) in the web app, switch to the Image tab, drop a single clean object photo,
-#    and Generate. The API resolves your upload and runs:
-#       image -> TripoSplat L2 (native gaussians) -> 2DGS L3 (surfel refine)
-```
-
-Or drive the GPU producer directly (no web app), which is how CI/spikes run it —
-note it **must** go through `run-python.cmd` so gsplat's JIT compiler has the
-MSVC build env:
+On the box, `pnpm run up` already runs the real producer (§1) — just use the web
+app's **Text** or **Image** tab. To drive the producer directly (no web app),
+which is how spikes/CI run it — note it **must** go through `run-python.cmd` so
+gsplat's JIT compiler has the MSVC build env:
 
 ```powershell
 cd pipelines\gpu
@@ -122,17 +120,24 @@ Every generation writes, into its artifact dir:
 
 ## Gates
 
-Run these to re-verify the build is green (all pass as of 2026-06-15):
+Run these to re-verify the build is green (all pass as re-run 2026-06-19):
 
 | Component | Command (from its dir) | Result |
 |---|---|---|
-| API | `uv run ruff check . && uv run mypy && uv run pytest -q` | ruff ✓ · mypy 23 ✓ · **51 passed, 1 skipped** |
-| Web | `pnpm test && pnpm exec tsc --noEmit && pnpm lint` | **18 passed** ✓ · tsc ✓ · lint ✓ |
-| `@astel/manifest` | `pnpm test && pnpm typecheck && pnpm lint` | **10 passed** ✓ |
-| libs (`astel_*`) | `uv run pytest -q` in each | **87 passed** (14+10+16+11+36) |
-| GPU pipeline | `uv run ruff check src tests && uv run mypy src tests && uv run pytest -q` | ruff ✓ · mypy 34 ✓ · **55 passed, 2 skipped** |
+| API | `uv run ruff check . && uv run mypy && uv run pytest -q` | ruff ✓ · mypy 27 ✓ · **72 passed, 1 skipped** |
+| Web | `pnpm test && pnpm run lint` (lint = `eslint . && tsc -b`) | **73 passed** ✓ · eslint ✓ · tsc -b ✓ |
+| `@astel/manifest` | `pnpm test && pnpm run build` | **15 passed** ✓ |
+| `@astel/sdk` | `pnpm test && pnpm run build` | **9 passed** ✓ |
+| libs (`astel_*`, ×9) | `uv run ruff check . && uv run mypy && uv run pytest -q` in each | **342 passed** (appearance 25 · dynamics 40 · eval 36 · format 34 · llm 24 · lod 53 · scene 56 · solid 37 · splat_io 37) |
+| GPU pipeline | `uv run ruff check . && uv run mypy && uv run pytest -q` | ruff ✓ · mypy 43 ✓ · **112 passed, 3 skipped** |
+| `astel-sdk` (Python) | `uv run ruff check . && uv run mypy && uv run pytest -q` | ruff ✓ · mypy ✓ · **11 passed** |
+| `tools/loadtest` | `uv run ruff check . && uv run mypy && uv run python load_test.py --self-test` | ruff ✓ · mypy ✓ · self-test ✓ |
 
-The 2 skipped GPU tests run a real gsplat kernel; they skip cleanly unless
-launched through `run-python.cmd` on a CUDA box (so a plain `uv run pytest` is
-green everywhere). Run them for real with:
+The 3 skipped GPU tests are environmental: 2 run a real gsplat kernel (they skip
+cleanly unless launched through `run-python.cmd` on a CUDA box, so a plain
+`uv run pytest` is green everywhere) and 1 needs cached FLUX.1-schnell weights.
+Run the kernel tests for real with:
 `.\run-python.cmd -m pytest tests\test_smoke_refit.py tests\test_synthetic_eval.py`.
+
+> There is no CI runner yet (the top launch blocker) — these gates are run by
+> hand. See [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md).

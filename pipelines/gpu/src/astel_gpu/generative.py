@@ -104,7 +104,14 @@ def build_generative_quality_report(
     """``astel.quality-report/v0`` for a generated, surfelised L3 asset."""
     return {
         "schema": "astel.quality-report/v0",
-        "origin": "measured",
+        # Honesty contract (CLAUDE.md §1.3/§8.4): this asset is distilled from the
+        # TripoSplat L2 generator, NOT reconstructed from real capture, so its
+        # origin is "generated". The Truth Meter reads this exact field to choose
+        # its provenance pill; "measured" here would render a false "reconstructed
+        # from real capture with ground-truth comparison" claim over a generated
+        # object. Every other field (provenance, caveats, geometric_error.reason)
+        # already says generated; this keeps origin consistent with them.
+        "origin": "generated",
         "modality": "generative-image/triposplat-l2->2dgs-l3",
         "representation": "2dgs",
         "splats": count,

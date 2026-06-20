@@ -17,14 +17,17 @@ export interface QualityReport {
   splat_budget: string;
   active_layer: string;
   scale: {
-    longest_axis_m: number;
-    confidence: number;
+    // null when the asset has no metric-scale grounding (generated assets).
+    longest_axis_m: number | null;
+    confidence: number | null;
     method: string;
     note: string;
   };
   geometry: {
-    chamfer_mm_vs_l1: number;
-    psnr_db: number;
+    // null when there is no ground-truth/L1 reference to measure against
+    // (generated assets) — the Truth Meter renders these as "not measured".
+    chamfer_mm_vs_l1: number | null;
+    psnr_db: number | null;
     ssim: number;
     normals_present: boolean;
   };
@@ -61,18 +64,20 @@ export interface ApiQualityReport {
   modality: string;
   splats: number;
   geometric_error: {
-    chamfer_mm_vs_l1: number;
-    method: string;
+    // null for generated assets (no ground-truth scan to compare against).
+    chamfer_mm_vs_l1: number | null;
+    method: string | null;
   };
   fidelity: {
-    psnr_db: number;
+    psnr_db: number | null;
     ssim: number | null;
     lpips: number | null;
     n_holdout_views: number;
   };
   scale: {
-    longest_axis_m: number;
-    confidence: number;
+    // null for generated assets (no metric-scale grounding performed).
+    longest_axis_m: number | null;
+    confidence: number | null;
     method: string;
   };
   provenance: {

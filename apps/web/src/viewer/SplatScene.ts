@@ -68,8 +68,18 @@ export class SplatScene {
     // Stop auto-spin as soon as the user grabs the model.
     this.controls.addEventListener("start", () => (this.autoSpin = false));
 
-    // enable2DGS: our sample uses flattened, surfel-style splats.
-    this.spark = new SparkRenderer({ renderer: this.renderer, enable2DGS: true });
+    // enable2DGS: our 2DGS L3 assets are flattened, surfel-style splats.
+    // minPixelRadius floors each splat to ~1.5px on screen: real generated
+    // assets (262k surfels normalised to a unit frame) have very small
+    // per-splat scales (~0.002 of the object radius), so with the default
+    // floor of 0 they rasterize sub-pixel and the whole asset reads as blank.
+    // Flooring makes the dense surfel cloud visible without affecting the
+    // already-larger sample splats. (CLAUDE.md: the viewer is the product demo.)
+    this.spark = new SparkRenderer({
+      renderer: this.renderer,
+      enable2DGS: true,
+      minPixelRadius: 2.0,
+    });
     this.scene.add(this.spark);
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize());

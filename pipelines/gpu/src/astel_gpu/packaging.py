@@ -30,6 +30,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import astel_dynamics
+import astel_lod
 import numpy as np
 from astel_format.builder import build_minimal_package
 from astel_format.models import (
@@ -551,6 +553,92 @@ def _try_appearance(
         return None
 
 
+def _write_lod(l3_cloud: SplatCloud, out_dir: Path) -> dict[str, Any] | None:
+    """Best-effort LOD emission: importance-ranked tier PLYs + ``l3.lod.json``.
+
+    Always includes a "full" tier pointing at the master ``l3.ply`` (no new
+    file written). For each named tier in :data:`astel_lod.TIER_BUDGETS` whose
+    budget is STRICTLY LESS THAN N (the cloud is large enough to downsample),
+    writes ``l3.lod.<name>.ply`` and adds a tier entry. Deduplication: if two
+    budgets are equal (should not happen with the current constants, but guarded
+    for forward-safety) or equal N, only one tier is emitted.
+
+    Returns the descriptor dict (``astel.lod/v0``) or ``None`` on failure —
+    LOD emission must never fail an asset.
+    """
+    try:
+        n = l3_cloud.count
+
+        # Collect unique downsample budgets strictly below N (ascending).
+        seen_counts: set[int] = {n}  # "full" tier reserves N
+        downsample_tiers: list[tuple[str, int]] = []
+        for tier_name, budget in sorted(
+            astel_lod.TIER_BUDGETS.items(), key=lambda kv: kv[1]
+        ):
+            if budget < n and budget not in seen_counts:
+                seen_counts.add(budget)
+                downsample_tiers.append((tier_name, budget))
+
+        # Build all LOD index arrays in one pass (generate_lod_indices computes
+        # importance once internally from opacity + log_scales).
+        tiers: list[dict[str, Any]] = []
+
+        # "full" tier — master file, no copy needed.
+        tiers.append({"name": "full", "count": n, "file": "l3.ply"})
+
+        if downsample_tiers:
+            budgets = [b for _, b in downsample_tiers]
+            index_arrays = astel_lod.generate_lod_indices(
+                l3_cloud.opacity, l3_cloud.log_scales, budgets
+            )
+            for (tier_name, _budget), indices in zip(
+                downsample_tiers, index_arrays, strict=True
+            ):
+                actual_count = len(indices)
+                # Honest: only emit if count is distinct from what we already have.
+                if actual_count in seen_counts:
+                    continue
+                seen_counts.add(actual_count)
+                lod_cloud = l3_cloud.reordered(indices)
+                lod_filename = f"l3.lod.{tier_name}.ply"
+                write_ply(lod_cloud, out_dir / lod_filename)
+                tiers.append(
+                    {"name": tier_name, "count": actual_count, "file": lod_filename}
+                )
+
+        descriptor: dict[str, Any] = astel_lod.build_lod_descriptor(tiers)
+        astel_lod.write_descriptor(descriptor, out_dir / "l3.lod.json")
+        return descriptor
+    except Exception:
+        logger.exception("LOD emission failed (best-effort); skipping LOD artifacts")
+        return None
+
+
+def write_dynamics_layer(
+    field: astel_dynamics.DeformationField,
+    timeline: astel_dynamics.Timeline,
+    out_dir: Path,
+    *,
+    representation: str = "deformation_field",
+) -> tuple[Path, Path]:
+    """Write L7 deformation field + timeline into ``out_dir``.
+
+    Writes ``l7-deformation.bin`` (via :func:`astel_dynamics.write_deformation_bin`)
+    and ``l7-timeline.json`` (via :func:`astel_dynamics.write_timeline_json`).
+    Returns ``(deformation_path, timeline_path)``.
+
+    This is the public helper that the video/dynamics pipeline stage calls after
+    fitting the deformation field; the paths are then passed to
+    :func:`write_layer_stack` (via ``l7_deformation_path`` / ``l7_timeline_path``)
+    to bind the L7 layer into the ``.astel`` package.
+    """
+    deformation_path = out_dir / "l7-deformation.bin"
+    timeline_path = out_dir / "l7-timeline.json"
+    astel_dynamics.write_deformation_bin(field, deformation_path)
+    astel_dynamics.write_timeline_json(timeline, timeline_path)
+    return deformation_path, timeline_path
+
+
 def write_layer_stack(
     l3_cloud: SplatCloud,
     out_dir: Path,
@@ -566,6 +654,9 @@ def write_layer_stack(
     appearance_l4: bool = True,
     meters_per_unit: float = 1.0,
     longest_axis_m: float | None = None,
+    l7_deformation_path: Path | None = None,
+    l7_timeline_path: Path | None = None,
+    l7_representation: str | None = None,
 ) -> list[str]:
     """Write the full ``.astel`` artifact contract for ``l3_cloud`` into ``out_dir``.
 
@@ -600,6 +691,19 @@ def write_layer_stack(
     l3_ply = out_dir / "l3.ply"
     write_ply(l3_cloud, l3_ply)
     artifacts.append("l3.ply")
+
+    # LOD emission (CLAUDE.md §8.6): importance-ranked tier PLYs + descriptor.
+    # Best-effort, never fatal. Only emits downsampled tiers when the cloud is
+    # large enough (budget < N); for small/test clouds, only "full" tier is
+    # recorded. The "full" tier always points at l3.ply — no duplicate copy.
+    lod_descriptor = _write_lod(l3_cloud, out_dir)
+    if lod_descriptor is not None:
+        artifacts.append("l3.lod.json")
+        for tier in lod_descriptor.get("tiers", []):
+            tier_file = str(tier.get("file", ""))
+            if tier_file and tier_file != "l3.ply" and tier_file not in artifacts:
+                artifacts.append(tier_file)
+        report_dict["lod"] = lod_descriptor
 
     l0_ply = out_dir / "l0.ply"
     write_ply(l0_cloud, l0_ply)
@@ -745,6 +849,9 @@ def write_layer_stack(
         l5_mass_props_path=l5_mass_props_path,
         l6_regions_path=l6_regions_path,
         l6_articulation=l6_articulation_list if l6_articulation_list else None,
+        l7_deformation_path=l7_deformation_path,
+        l7_timeline_path=l7_timeline_path,
+        l7_representation=l7_representation,
     )
     package.write(out_dir / "package.astel")
     artifacts.append("package.astel")

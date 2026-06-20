@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { SiteLayout } from "./components/site/SiteLayout.tsx";
 import { DocsPage } from "./pages/DocsPage.tsx";
 import { FeaturesPage } from "./pages/FeaturesPage.tsx";
@@ -44,8 +45,10 @@ export function AppRoutes(): React.JSX.Element {
 
 export function App(): React.JSX.Element {
   return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

@@ -98,7 +98,7 @@ export function GalleryPage(): React.JSX.Element {
         <Section
           eyebrow="Asset catalog"
           title="Open any asset in the live viewer."
-          lede="The catalog grows as the pipeline produces more assets. Today it starts with the bundled reference — a fully synthetic generated splat that sets the honesty baseline."
+          lede="Every generation the pipeline produces lands here automatically, newest first, alongside the bundled reference that sets the honesty baseline. Open any one to inspect its splats and quality report live."
           className="gallery-catalog"
         >
           {/* Error state */}

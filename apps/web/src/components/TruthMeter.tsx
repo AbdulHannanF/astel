@@ -94,11 +94,51 @@ function Skeleton(): React.JSX.Element {
   );
 }
 
+/**
+ * One Truth Meter metric tile. A `null` value renders as an honest "not
+ * measured" placeholder (generated assets have no ground-truth geometry or
+ * metric scale) instead of a fabricated number — and never calls `.toFixed()`
+ * on null, which previously crashed the whole app to a black screen.
+ */
+function Metric({
+  label,
+  value,
+  format,
+  unit,
+}: {
+  label: string;
+  value: number | null;
+  format: (v: number) => string;
+  unit: string;
+}): React.JSX.Element {
+  return (
+    <div className="metric">
+      <div className="metric__label">{label}</div>
+      {value == null ? (
+        <div className="metric__value metric__value--na" title="Not measured for this asset">
+          —<small>not measured</small>
+        </div>
+      ) : (
+        <div className="metric__value">
+          {format(value)}
+          <small>{unit}</small>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Report({ report }: { report: QualityReport }): React.JSX.Element {
   const measured = Math.round(report.provenance.measured_ratio * 100);
   const generated = 100 - measured;
-  const confPct = Math.round(report.scale.confidence * 100);
-  const confLevel = report.scale.confidence >= 0.7 ? "high" : "low";
+  // confidence/scale/chamfer are null for generated assets (no ground truth or
+  // metric grounding). Render those as "not measured" rather than coercing a
+  // null to 0 — a fabricated 0.0 would violate the honesty contract (and the
+  // old `.toFixed()` on null crashed the whole app to a black page).
+  const hasConf = report.scale.confidence != null;
+  const confPct = hasConf ? Math.round(report.scale.confidence! * 100) : 0;
+  const confLevel =
+    hasConf && report.scale.confidence! >= 0.7 ? "high" : "low";
 
   return (
     <>
@@ -123,40 +163,36 @@ function Report({ report }: { report: QualityReport }): React.JSX.Element {
       </div>
 
       <div className="truth__grid">
-        <div className="metric">
-          <div className="metric__label">Geometric error</div>
-          <div className="metric__value">
-            {report.geometry.chamfer_mm_vs_l1.toFixed(1)}
-            <small>mm chamfer</small>
-          </div>
-        </div>
-        <div className="metric">
-          <div className="metric__label">Fidelity</div>
-          <div className="metric__value">
-            {report.geometry.psnr_db.toFixed(1)}
-            <small>dB psnr</small>
-          </div>
-        </div>
-        <div className="metric">
-          <div className="metric__label">Splats</div>
-          <div className="metric__value">
-            {(report.splat_count / 1000).toFixed(0)}
-            <small>k</small>
-          </div>
-        </div>
-        <div className="metric">
-          <div className="metric__label">Longest axis</div>
-          <div className="metric__value">
-            {(report.scale.longest_axis_m * 100).toFixed(1)}
-            <small>cm</small>
-          </div>
-        </div>
+        <Metric
+          label="Geometric error"
+          value={report.geometry.chamfer_mm_vs_l1}
+          format={(v) => v.toFixed(1)}
+          unit="mm chamfer"
+        />
+        <Metric
+          label="Fidelity"
+          value={report.geometry.psnr_db}
+          format={(v) => v.toFixed(1)}
+          unit="dB psnr"
+        />
+        <Metric
+          label="Splats"
+          value={report.splat_count}
+          format={(v) => (v / 1000).toFixed(0)}
+          unit="k"
+        />
+        <Metric
+          label="Longest axis"
+          value={report.scale.longest_axis_m}
+          format={(v) => (v * 100).toFixed(1)}
+          unit="cm"
+        />
       </div>
 
       <div className="confidence">
         <div className="confidence__head mono">
           <span className="label">scale confidence</span>
-          <span className="pct">{confPct}%</span>
+          <span className="pct">{hasConf ? `${confPct}%` : "n/a"}</span>
         </div>
         <div className="confidence__track">
           <div

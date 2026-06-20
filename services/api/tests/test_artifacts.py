@@ -51,6 +51,18 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield c
 
 
+async def _await_job(client: httpx.AsyncClient, task_id: str) -> None:
+    """Block until the background generation job for ``task_id`` finishes.
+
+    Production runs asynchronously now; draining the SSE stream returns once the
+    job reaches a terminal state, after which the artifacts are on disk and the
+    row is finalised.
+    """
+    async with client.stream("GET", f"/v1/generations/{task_id}/events") as stream:
+        async for _line in stream.aiter_lines():
+            pass
+
+
 def test_synth_cloud_deterministic() -> None:
     cloud_a = synth_cloud(stable_seed("task-one"))
     cloud_b = synth_cloud(stable_seed("task-one"))
@@ -144,7 +156,9 @@ async def test_generation_exposes_artifacts(client: httpx.AsyncClient) -> None:
         json={"modality": "text", "prompt": "a worn brass astrolabe"},
     )
     assert resp.status_code == 201
-    body = resp.json()
+    task_id = resp.json()["id"]
+    await _await_job(client, task_id)
+    body = (await client.get(f"/v1/generations/{task_id}")).json()
     names = {a["name"] for a in body["artifacts"]}
     assert "l3.ply" in names
     assert "quality-report.json" in names
@@ -160,6 +174,7 @@ async def test_get_artifact_serves_and_404s(client: httpx.AsyncClient) -> None:
         json={"modality": "image", "prompt": "a ceramic teapot"},
     )
     task_id = create.json()["id"]
+    await _await_job(client, task_id)
 
     resp = await client.get(f"/v1/generations/{task_id}/artifacts/l3.ply")
     assert resp.status_code == 200
@@ -191,6 +206,7 @@ async def test_new_exports_served_as_octet_stream(client: httpx.AsyncClient) -> 
         json={"modality": "text", "prompt": "a brass astrolabe"},
     )
     task_id = create.json()["id"]
+    await _await_job(client, task_id)
     for name in ("l0.ply", "l3.spz", "l3.sog", "package.astel"):
         resp = await client.get(f"/v1/generations/{task_id}/artifacts/{name}")
         assert resp.status_code == 200, name
@@ -237,6 +253,7 @@ async def test_capture_id_flows_into_generation(client: httpx.AsyncClient) -> No
     )
     assert gen.status_code == 201
     task_id = gen.json()["id"]
+    await _await_job(client, task_id)
 
     # The link is persisted on the generation row.
     fetched = await client.get(f"/v1/generations/{task_id}")

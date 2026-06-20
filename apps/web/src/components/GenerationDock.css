@@ -221,6 +221,29 @@
   width: 100% !important;
 }
 
+/* Indeterminate "working" state: the GPU producer runs synchronously before any
+   stage events arrive, so animate every track to show progress is happening. */
+.stages--working .stage-cell__track {
+  position: relative;
+}
+.stages--working .stage-cell__track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: var(--r-pill);
+  background: var(--accent-bright, var(--accent));
+  animation: stage-indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes stage-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 .rail-status {
   display: flex;
   align-items: center;

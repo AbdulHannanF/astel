@@ -70,7 +70,12 @@ def build_quality_report(
     """
     return {
         "schema": "astel.quality-report/v0",
-        "origin": "measured",
+        # Render-then-refit self-consistency, NOT a reconstruction of any real
+        # object: origin is "generated" (CLAUDE.md §1.3/§8.4). The Truth Meter
+        # reads this field for its provenance pill; "measured" would falsely claim
+        # ground-truth capture. The fidelity.psnr_db below is still a genuinely
+        # measured self-consistency number -- that honesty lives in its own note.
+        "origin": "generated",
         "modality": modality,
         "splats": count,
         "geometric_error": {
@@ -256,6 +261,58 @@ def _produce_text_generative(
     )
 
 
+def _produce_video(
+    task_id: str,
+    modality: str,
+    prompt: str,
+    out_dir: Path,
+    *,
+    iters: int,
+    image: Path | None,
+    refine_iters: int,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
+) -> dict[str, Any]:
+    """Video modality dispatcher — honest about what it does and does not do.
+
+    If a representative frame (``image``) is supplied and readable, runs the
+    REAL static reconstruction path (image → TripoSplat L2 → 2DGS L3) with
+    an explicit origin note that this is a static reconstruction from a single
+    frame, NOT full 4DGS tracking.  L7 dynamics are NOT produced here — they
+    require the GPU deformable-reconstruction stage (future work).
+
+    If no frame is available, falls back to the smoke path with a clear caveat
+    that the video was not used to condition the geometry and that dynamics/L7
+    were not produced.
+
+    HONESTY CONTRACT (CLAUDE.md §10.4): no L7 deformation is emitted on this
+    path regardless of input — the builder only binds L7 when an explicit
+    deformation file is passed (Part 3 of the wiring), which this path does
+    not supply.  The capability exists (``write_dynamics_layer`` + tests) but
+    real per-frame tracking is a dedicated GPU deformable-recon stage; to
+    pretend otherwise would be a silent hallucination over real data.
+    """
+    if image is not None and image.is_file():
+        return _produce_from_image(
+            task_id,
+            modality,
+            prompt,
+            image,
+            out_dir,
+            refine_iters=refine_iters,
+            longest_axis_m=longest_axis_m,
+            l6_json_path=l6_json_path,
+            origin_note=(
+                "Static reconstruction from a video frame (sharpest available); "
+                "L7 dynamics tracking (4DGS) is NOT performed here — it requires "
+                "the GPU deformable-recon stage. The asset is a static L3."
+            ),
+        )
+
+    # No usable frame supplied: smoke fallback with honest caveats.
+    return _produce_smoke(task_id, modality, prompt, out_dir, iters=iters)
+
+
 def _produce_smoke(
     task_id: str, modality: str, prompt: str, out_dir: Path, *, iters: int
 ) -> dict[str, Any]:
@@ -347,6 +404,18 @@ def produce(
             modality,
             prompt,
             out_dir,
+            refine_iters=refine_iters,
+            longest_axis_m=longest_axis_m,
+            l6_json_path=l6_json_path,
+        )
+    if modality == "video":
+        return _produce_video(
+            task_id,
+            modality,
+            prompt,
+            out_dir,
+            iters=iters,
+            image=image,
             refine_iters=refine_iters,
             longest_axis_m=longest_axis_m,
             l6_json_path=l6_json_path,

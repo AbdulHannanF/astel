@@ -1,4 +1,15 @@
-# Astel — Architecture (M1 skeleton)
+# Astel — Architecture (M1 skeleton baseline)
+
+> **Scope note (2026-06-19).** This document is the **M1-skeleton baseline** as of
+> 2026-06-13. The seams it describes (TaskEngine, ArtifactStore, the stub producer,
+> Alembic) are all still current, but the build plan has since advanced through
+> **M2–M6** — the GPU producer, layers L0–L7, engine plugins, SDKs, and the docs
+> site now exist. For the **current** architecture overview see
+> `docs/site/docs/architecture.md`; for status see
+> [`docs/NEXT_STEPS.md`](../NEXT_STEPS.md) and
+> [`docs/LAUNCH_CHECKLIST.md`](../LAUNCH_CHECKLIST.md). The "Verified local checks"
+> and "Toolchain" sections below are a dated 2026-06-13 snapshot (the dev box was a
+> Quadro P1000; GPU work has since moved to the 2×4090 Box A).
 
 *Updated 2026-06-13. This documents what actually exists in the repo today and,
 explicitly, where the dev-mode skeleton deviates from the intended production
@@ -25,33 +36,42 @@ libs/               Shared Python libraries (uv-managed, each with its own
                                          adapters, runner, Bradley-Terry scoring
                                          scaffold for the M3 gate.
 infra/              docker-compose.yml — prod-shaped stack (Postgres/MinIO/Temporal).
-.github/workflows/  ci.yml — web / manifest / api / pipeline-stub / libs /
-                    license-gate jobs.
-docs/               research, specs (.astel manifest), eval corpus, architecture.
-experiments/        spikes (task-engine-spike → Temporal decision).
+.github/workflows/  ci.yml — python-libs (×9) / api / sdk-python / loadtest /
+                    web-and-ts jobs (CPU); gpu.yml — self-hosted CUDA gate (manual).
+docs/               research, specs (.astel manifest), eval corpus, architecture,
+                    the MkDocs site (docs/site), retros, launch checklist.
 ```
 
 Workspace tooling: **pnpm** (`pnpm-workspace.yaml` globs `apps/*`, `packages/*`)
 for JS; **uv** per-service for Python (`services/api`, `pipelines/stub` each have
 their own `pyproject.toml` + `uv.lock`).
 
-## Request flow (M1)
+## Request flow
 
 ```
 Browser (apps/web)
   POST /v1/generations {modality, prompt}      ──▶  row inserted (QUEUED), task id returned
-                                                  ──▶  produce_artifacts() writes a real
-                                                        per-task l3.ply + quality-report.json
-                                                        into the ArtifactStore (synchronous,
-                                                        stub mode)
-  GET  /v1/generations/{id}/events  (SSE)       ──▶  TaskEngine.run() streams ProgressEvent
-        L0_SEED → L1_DENSE → L2_COARSE → L3_REFINED, each with shaped metrics
-        (splats, PSNR, Chamfer mm, VRAM GB), terminal event flips row to SUCCEEDED
+                                                  IMMEDIATELY; a background asyncio job
+                                                  (astel_api.jobs.JobManager) runs the real
+                                                  pipeline (Generation Spec → physics-material
+                                                  → stub/GPU producer → billing) in a thread
+                                                  executor and publishes ProgressEvents.
+  GET  /v1/generations/{id}/events  (SSE)       ──▶  streams the job's REAL per-stage events
+        L0_SEED → L1_DENSE → L2_COARSE → L3_REFINED (the heavy produce step eases the bar
+        asymptotically, capped < 1.0); the terminal event is SUCCEEDED only when the asset
+        truly exists on disk, else FAILED with the real error. The job finalises the row
+        (produced / splats / conditioning / credits / status); a reconnect to an evicted
+        job replays a single terminal event rebuilt from the row.
   GET  /v1/generations/{id}/artifacts/{name}    ──▶  FileResponse from the ArtifactStore
                                                         (400 on bad name, 404 if missing)
+  GET  /v1/generations                          ──▶  catalog of produced assets (the gallery)
   GET  /v1/pipeline                             ──▶  static StageSpec list for the progress rail
   GET  /v1/pricing                              ──▶  credit price schedule (preview/refine tiers)
 ```
+
+The legacy **synchronous** produce-in-the-POST path is retained only for the
+opt-in Temporal engine (`ASTEL_ENGINE=temporal`), whose durable workflow drives
+the SSE rail instead. The default in-process path is fully asynchronous.
 
 `POST /v1/generations` also accepts `mode` (`preview`|`refine`) + `refine_of` and returns a
 `billing` summary; every generation stores a `credit-ledger.json` artifact. See
@@ -89,7 +109,7 @@ live report with a mandatory **STUB** pill + caveat.
 | Database | SQLite via `aiosqlite` (`astel_dev.db`, gitignored) | Postgres (`infra/docker-compose.yml`) | No Docker / no admin on dev box; DB URL is env-driven so prod is a config swap |
 | Object storage | `LocalArtifactStore` on the local filesystem (`ASTEL_ARTIFACT_DIR`, gitignored) | MinIO/S3 for layer artifacts | Filesystem store is an S3-swappable seam; same interface |
 | Task engine | `InProcessStubEngine` default; `TemporalTaskEngine` exists, opt-in via `ASTEL_ENGINE=temporal` | Temporal durable workflow as default; SSE subscribes to event history | Temporal engine is integrated but untested on this box (no `temporal` CLI here) |
-| Artifacts | Procedural per-task `l3.ply` + `quality-report.json` (`origin: "stub"`), produced synchronously at submit | Real GPU reconstruction outputs (L0–L7) | Full `.astel` packaging, `.spz`/`.sog` exports, `l0.ply`, and async production await M2 GPU pipeline |
+| Artifacts | Full per-task layer stack (`l0/l3.ply`, `.spz`/`.sog`/`.glb`, `package.astel`, `quality-report.json`) produced **asynchronously** by a background job — stub (`origin: "stub"`) or the real GPU producer (`origin: "generated"`) | Distributed GPU worker fleet | The async job manager (`astel_api.jobs`) is the default engine; Temporal is the opt-in durable upgrade |
 | GPU pipeline | stub only (procedural PLY) | gsplat/TRELLIS/MapAnything on the 2×4090 box | Founder deferred GPU work 2026-06-13 — "make everything work, then scale GPU" |
 | Auth / credits | none | API keys + credit ledger (spec §7) | Post-M1 |
 

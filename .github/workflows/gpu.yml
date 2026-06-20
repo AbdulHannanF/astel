@@ -1,0 +1,37 @@
+name: GPU pipeline
+
+# The pipelines/gpu gates require torch (CUDA 12.8 index) + gsplat (CUDA kernels),
+# so they cannot run on GitHub-hosted runners — see ci.yml for the CPU coverage.
+# This workflow runs them on a SELF-HOSTED CUDA runner (the 2x4090 box, Box A),
+# registered with the labels [self-hosted, gpu, windows].
+#
+# It is manual-only (workflow_dispatch): with no self-hosted runner registered it
+# simply never runs, so it never blocks PRs. Trigger it from the Actions tab once
+# Box A is online as a runner.
+#
+# The real gsplat-kernel tests (test_smoke_refit, test_synthetic_eval) need the
+# MSVC build env for gsplat's JIT loader — they are launched through
+# run-python.cmd (which sets up vcvars) rather than a plain `uv run`.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gpu:
+    name: pipelines/gpu (self-hosted CUDA)
+    runs-on: [self-hosted, gpu, windows]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ruff + mypy + CPU pytest subset
+        shell: bash
+        run: |
+          uv run --directory pipelines/gpu ruff check .
+          uv run --directory pipelines/gpu mypy
+          uv run --directory pipelines/gpu pytest -q
+      - name: real gsplat-kernel tests (via run-python.cmd / vcvars)
+        shell: cmd
+        working-directory: pipelines/gpu
+        run: run-python.cmd -m pytest tests\test_smoke_refit.py tests\test_synthetic_eval.py -q

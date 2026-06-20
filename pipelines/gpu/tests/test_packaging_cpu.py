@@ -74,6 +74,7 @@ def test_write_layer_stack_emits_full_contract(tmp_path: Path) -> None:
     expected = {
         "l0.ply",
         "l3.ply",
+        "l3.lod.json",
         "l3.spz",
         "l3.sog",
         "l3.glb",

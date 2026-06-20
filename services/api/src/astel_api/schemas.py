@@ -174,6 +174,25 @@ class GenerationResource(BaseModel):
     conditioning: Literal["prompt", "image", "video", "none"] | None = None
 
 
+class GenerationSummary(BaseModel):
+    """A compact generation record for the catalog list (``GET /v1/generations``).
+
+    Lighter than :class:`GenerationResource` (no artifact list / billing) so the
+    gallery can render every produced asset cheaply. ``has_asset`` is True only
+    when the viewable ``l3.ply`` is actually on disk, so the gallery never links
+    to an asset whose production failed.
+    """
+
+    id: str
+    modality: Modality
+    prompt: str
+    created_at: str
+    produced: bool
+    splats: int | None = None
+    conditioning: Literal["prompt", "image", "video", "none"] | None = None
+    has_asset: bool = False
+
+
 class LayerPriceRef(BaseModel):
     """A layer's credit cost in the public price schedule."""
 

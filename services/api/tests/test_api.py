@@ -44,6 +44,24 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
         yield c
 
 
+async def _drain_events(
+    client: httpx.AsyncClient, task_id: str
+) -> list[dict[str, object]]:
+    """Consume a generation's SSE stream to completion, returning all events.
+
+    Production now runs asynchronously in a background job; draining the event
+    stream blocks until the job reaches a terminal state, so callers can then
+    read back the finalised row (produced/splats/billing).
+    """
+    events: list[dict[str, object]] = []
+    async with client.stream("GET", f"/v1/generations/{task_id}/events") as stream:
+        assert stream.status_code == 200
+        async for line in stream.aiter_lines():
+            if line.startswith("data:"):
+                events.append(json.loads(line[len("data:") :].strip()))
+    return events
+
+
 async def test_healthz(client: httpx.AsyncClient) -> None:
     resp = await client.get("/healthz")
     assert resp.status_code == 200
@@ -80,6 +98,34 @@ async def test_create_generation_returns_task(client: httpx.AsyncClient) -> None
     assert body["conditioning"] == "none"
 
 
+async def test_list_generations_returns_produced_assets(
+    client: httpx.AsyncClient,
+) -> None:
+    # Two generations; the stub producer writes l3.ply + sets produced=True.
+    first = await client.post(
+        "/v1/generations", json={"modality": "text", "prompt": "a brass gear"}
+    )
+    second = await client.post(
+        "/v1/generations", json={"modality": "text", "prompt": "a stone lantern"}
+    )
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+    # Wait for both background jobs to finish before listing the catalog.
+    await _drain_events(client, first_id)
+    await _drain_events(client, second_id)
+
+    resp = await client.get("/v1/generations")
+    assert resp.status_code == 200
+    items = resp.json()
+    ids = {item["id"] for item in items}
+    assert {first_id, second_id} <= ids
+    # Each listed asset is produced and has its viewable l3.ply on disk.
+    for item in items:
+        assert item["produced"] is True
+        assert item["has_asset"] is True
+        assert "prompt" in item and "created_at" in item
+
+
 async def test_pricing_schedule(client: httpx.AsyncClient) -> None:
     resp = await client.get("/v1/pricing")
     assert resp.status_code == 200
@@ -99,7 +145,10 @@ async def test_create_generation_defaults_to_refine_with_billing(
         json={"modality": "text", "prompt": "a worn brass astrolabe"},
     )
     assert resp.status_code == 201
-    body = resp.json()
+    task_id = resp.json()["id"]
+    # Billing is finalised by the background job; read it back once it completes.
+    await _drain_events(client, task_id)
+    body = (await client.get(f"/v1/generations/{task_id}")).json()
     assert body["mode"] == "refine"
     billing = body["billing"]
     assert billing is not None
@@ -122,11 +171,19 @@ async def test_preview_mode_bills_less_than_refine(
         "/v1/generations",
         json={"modality": "text", "prompt": "a teapot", "mode": "refine"},
     )
-    p_total = preview.json()["billing"]["total_credits"]
-    r_total = refine.json()["billing"]["total_credits"]
-    assert p_total < r_total
+    preview_id = preview.json()["id"]
+    refine_id = refine.json()["id"]
+    await _drain_events(client, preview_id)
+    await _drain_events(client, refine_id)
+    preview_billing = (await client.get(f"/v1/generations/{preview_id}")).json()[
+        "billing"
+    ]
+    refine_billing = (await client.get(f"/v1/generations/{refine_id}")).json()[
+        "billing"
+    ]
+    assert preview_billing["total_credits"] < refine_billing["total_credits"]
     # Preview never bills the L3 hero layer.
-    p_codes = {i["code"] for i in preview.json()["billing"]["items"]}
+    p_codes = {i["code"] for i in preview_billing["items"]}
     assert "L3" not in p_codes
 
 
@@ -136,6 +193,7 @@ async def test_refine_of_bills_only_increment(client: httpx.AsyncClient) -> None
         json={"modality": "text", "prompt": "a mug", "mode": "preview"},
     )
     preview_id = preview.json()["id"]
+    await _drain_events(client, preview_id)
     refine = await client.post(
         "/v1/generations",
         json={
@@ -145,8 +203,10 @@ async def test_refine_of_bills_only_increment(client: httpx.AsyncClient) -> None
             "refine_of": preview_id,
         },
     )
-    body = refine.json()
-    assert body["refine_of"] == preview_id
+    refine_id = refine.json()["id"]
+    assert refine.json()["refine_of"] == preview_id
+    await _drain_events(client, refine_id)
+    body = (await client.get(f"/v1/generations/{refine_id}")).json()
     codes = {i["code"] for i in body["billing"]["items"]}
     # Keyed refine pays for L3 only — the preview's L0 is not re-charged.
     assert codes == {"L3"}
@@ -160,6 +220,7 @@ async def test_get_generation_returns_persisted_billing(
         json={"modality": "text", "prompt": "a lantern", "mode": "preview"},
     )
     task_id = create.json()["id"]
+    await _drain_events(client, task_id)
     fetched = await client.get(f"/v1/generations/{task_id}")
     assert fetched.status_code == 200
     body = fetched.json()
@@ -252,36 +313,36 @@ async def test_events_stream_reports_failure_when_production_failed(
 ) -> None:
     """A real production failure must yield a terminal FAILED SSE event.
 
-    Simulates produce_artifacts_dispatch raising (audit §2.6/§2.7): the row
-    is persisted with produced=False + the error message, and the SSE engine
-    must emit a single FAILED event -- never "Asset ready" with fabricated
-    metrics, even though zero artifacts exist.
+    Simulates the producer raising (audit §2.6/§2.7): the background job
+    persists the row with produced=False + the error message, and the SSE
+    stream must end on a FAILED event carrying that real error -- never "Asset
+    ready" with fabricated metrics, even though zero artifacts exist. The patch
+    wraps the stream drain because production now runs in the background job
+    while the SSE is consumed, not synchronously inside the POST.
     """
     with patch(
-        "astel_api.main.produce_artifacts_dispatch",
+        "astel_api.jobs.produce_artifacts_dispatch",
         side_effect=RuntimeError("simulated CUDA OOM"),
     ):
         create = await client.post(
             "/v1/generations",
             json={"modality": "image", "prompt": "a ceramic teapot"},
         )
-    assert create.status_code == 201
-    task_id = create.json()["id"]
-    # No billing was computed since production raised before pricing.
-    assert create.json()["billing"] is None
-    assert create.json()["conditioning"] == "none"
+        assert create.status_code == 201
+        task_id = create.json()["id"]
+        # The POST returns before production runs: no billing yet.
+        assert create.json()["billing"] is None
+        assert create.json()["conditioning"] == "none"
 
-    events: list[dict[str, object]] = []
-    async with client.stream("GET", f"/v1/generations/{task_id}/events") as stream:
-        assert stream.status_code == 200
-        async for line in stream.aiter_lines():
-            if line.startswith("data:"):
-                events.append(json.loads(line[len("data:") :].strip()))
+        events = await _drain_events(client, task_id)
 
-    assert len(events) == 1
-    assert events[0]["status"] == "failed"
-    assert events[0]["message"] == "simulated CUDA OOM"
-    assert events[0]["metrics"] is None
+    assert events, "expected at least a terminal event"
+    terminal = events[-1]
+    assert terminal["status"] == "failed"
+    assert terminal["message"] == "simulated CUDA OOM"
+    assert terminal["metrics"] is None
+    # No event ever claims success.
+    assert all(e["status"] != "succeeded" for e in events)
 
     get_resp = await client.get(f"/v1/generations/{task_id}")
     assert get_resp.json()["status"] == "failed"

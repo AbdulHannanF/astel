@@ -17,15 +17,25 @@ Astel turns text, photos, and video into `.astel` packages: photorealistic Gauss
 
 ## Quick start
 
-```bash
-# Start the API (requires a GPU for real generation)
-pip install astel-sdk
-astel-api
+Astel runs locally from the monorepo. Clone it, then bring up the web app + API
+together (CPU **stub** producer — works on any box):
 
-# Generate an asset
+```bash
+pnpm install
+pnpm run up           # web app + API together
+```
+
+For real GPU generation (text/image → splats) set `ASTEL_PRODUCER=gpu` on a CUDA box
+with the gsplat stack installed — see the [self-host guide](self-host.md).
+
+Drive the API from Python with the [SDK](sdk-python.md) (against a running server):
+
+```python
 from astel_sdk import AstelClient
-client = AstelClient()
+
+client = AstelClient("http://localhost:8000")
 gen = client.generate(prompt="a worn brass astrolabe on a wooden base")
+gen = client.wait_for_generation(gen.id)
 client.download_all_artifacts(gen.id, "out/")
 ```
 

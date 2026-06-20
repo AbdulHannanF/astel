@@ -34,29 +34,30 @@ const PLACEHOLDER: Record<Modality, string> = {
   video: "Drop an orbit clip to capture a real object",
 };
 
-// Honest, modality-aware note on what actually runs today (M3). Text has no
-// geometry generator yet (text→multiview is unbuilt), so it returns a
-// placeholder preview + a structured spec; the live generative path is image
-// input → TripoSplat. Surfaced up-front so the demo never over-promises.
+// Honest, modality-aware note on what actually runs today. With the GPU
+// producer enabled, text and image both run the real generative pipeline; video
+// still falls back to a static reconstruction (no 4DGS yet). Surfaced up-front
+// so the demo never over- or under-promises.
 const HINT: Record<Modality, React.JSX.Element> = {
   text: (
     <>
-      Text returns a <b>placeholder preview + structured spec</b> today —
-      prompt-faithful geometry isn’t wired yet. For a real generated model,
-      drop an <b>image</b> (the live TripoSplat → 2DGS pipeline).
+      Text runs the <b>live generative pipeline</b> (prompt → SDXL reference →
+      TripoSplat L2 → 2DGS L3). The result is conditioned on your prompt; the
+      Truth Meter marks it <b>generated</b> (no real-world scan to measure
+      against). A full run takes ~2&nbsp;min on the GPU.
     </>
   ),
   image: (
     <>
       A single image runs the <b>live generative pipeline</b> (TripoSplat L2 →
-      2DGS L3). Requires the GPU producer; on CPU you get the placeholder
-      preview.
+      2DGS L3). Requires the GPU producer; on CPU you get a placeholder preview.
     </>
   ),
   video: (
     <>
-      Video capture (orbit → 4DGS) is on the <b>M6</b> roadmap and not wired
-      yet — uploads are stored but produce the placeholder preview.
+      Video capture (orbit → 4DGS dynamics) is on the <b>M6</b> roadmap. A
+      representative frame runs the static reconstruction path; full motion
+      tracking isn’t wired yet.
     </>
   ),
 };
@@ -247,6 +248,11 @@ function ProgressRail({
   const overall = last ? Math.round(last.progress * 100) : 0;
   const done = phase === "done";
   const errored = phase === "error";
+  // The POST returns immediately (production runs in a background job); this is
+  // the brief window between submit and the first real SSE progress event. Show
+  // an honest indeterminate "working" state instead of a static "Queued · 0%".
+  const submitting =
+    (phase === "submitting" || phase === "running") && last === null;
 
   const metric = last?.metrics;
   const metricText =
@@ -258,7 +264,7 @@ function ProgressRail({
 
   return (
     <div className="rail-progress">
-      <div className="stages">
+      <div className={"stages" + (submitting ? " stages--working" : "")}>
         {STAGE_ORDER.map((stage, i) => {
           const isDone = done || (activeIndex >= 0 && i < activeIndex);
           const isActive = !done && i === activeIndex;
@@ -314,6 +320,11 @@ function ProgressRail({
             {metricText && (
               <span className="rail-status__metric mono">· {metricText}</span>
             )}
+          </>
+        ) : submitting ? (
+          <>
+            <span>Starting pipeline</span>
+            <span className="rail-status__metric mono">· queued on GPU</span>
           </>
         ) : (
           <>

@@ -110,7 +110,7 @@ export function GalleryAssetPage(): React.JSX.Element {
             {/* Left: live viewer */}
             <div className="gallery-asset-viewer">
               <Viewport
-                sampleUrl={entry.splatUrl}
+                sampleUrl="/samples/astel-sample.ply"
                 splatUrl={entry.splatUrl}
                 splatVisible
               />

@@ -24,7 +24,7 @@ workstream).*
 | Capture front-end (L0/L1) | **MapAnything `-apache` ckpt** | VGGT (if ckpt relicensed) | Apache code+weights, metric output, pose-free↔posed flexible, active ([RA3](03-capture-video.md)) | Apache-2.0 | ✅ |
 | Pose refinement | **GLOMAP/COLMAP BA** on MapAnything init | pure feed-forward | Classical BA still wins final accuracy on dense orbits; CPU-only → 3080-box CPUs ([RA3](03-capture-video.md)) | BSD | ✅ |
 | Metric scale | **Consensus: MapAnything + MoGe-2 + SfM/EXIF**, with reported CI | DA3METRIC-LARGE swap-in | Redundancy → honest confidence interval (Truth Meter input) ([RA3](03-capture-video.md)) | Apache/MIT | ✅ |
-| L7 dynamics | Own deformation-field 4DGS on gsplat (M6) | Faster-GS (Apache) as base | No turnkey permissive 4DGS exists ([RA3](03-capture-video.md)) | our code | ⬜ M6 |
+| L7 dynamics | **Affine-LBS deformation field** (own code, CPU-validated); GPU 4DGS video fit deferred | Faster-GS (Apache) as base | **M6 core landed (s29):** torch-free low-rank LBS field (farthest-point nodes + RBF weights + per-frame weighted-LS affine), validated vs analytic GT (rigid **1.6e-8**, bend **1.5%**, incompressible random **9.0%** of scale — honest residual), packed to `.bin`, bound into `.astel`, video path honest (static L3 + "dynamics not tracked"). Real per-frame 4DGS video fit = deferred GPU stage ([roadmap G1](18-post-m6-roadmap.md)); the binding + `write_dynamics_layer` are wired. No turnkey permissive 4DGS exists ([RA3](03-capture-video.md)) | our code | 🟡 core done, GPU fit → G1 |
 | L6 physics sim | MPM-on-gaussians over **NVIDIA Warp** | Taichi / Genesis; i-PhysGaussian implicit integrator as drop-in | **Math + engine settled**: PhysGaussian kinematics (a_p=F A_0 Fᵀ, MLS-MPM, SH-rot via polar-decomp); **interior filling from our L5 SDF, not opacity ray-march** (our improvement); Warp example maturity / sandbox latency = GPU eval, deferred 2026-06-13 ([RA8 §5](08-deep-reads.md)) | Apache | ✅ |
 | L6 semantics | LLM/VLM reasoning pass (Anthropic adapter) + SAM-class part segmentation | — | Own code on API; per-region material/density/friction ([RA4](04-physics-lighting-print.md)) | Apache (SAM2 verify) | 🟡 |
 | L4 appearance | Per-gaussian PBR (albedo/metallic/roughness/L_ind) via **deferred shading on gsplat** + split-sum IBL + jointly-optimized env map; **driven by real 2DGS normals**; TRELLIS.2 PBR seeds generative path | RTR-GS hybrid radiance-transfer branch | **RTR-GS validates deferred-PBR-on-gaussians** (relight PSNR 28.9 ORB); we improve it w/ real L3 normals (vs its pseudo-normals); port white-light + metal-prior + staged-PBR schedule; transfer-MLP branch dropped ([RA8 §6](08-deep-reads.md)) | our code | ✅ |
@@ -778,3 +778,58 @@ honest); L6 only flows on text + a Generation Spec + physics fixture/key; per-re
 not-segmented; photorealism tracks the TripoSplat L2 ceiling. **M4 closed — next is M5
 pipeline-readiness** (Unity/UE5 plugins consuming the now-live L5/L6, KHR_gaussian_splatting export,
 SDK + MCP) **or the text→multiview bridge.**
+
+---
+
+## 2026-06-19 (session 29) — M6: L7 dynamics, scene seeds, LOD, hardening
+
+**M6 implemented — the final milestone. Opus planned/verified, Sonnet
+implemented, Haiku did the mechanical doc.** Decisions settled this session:
+
+- **L7 dynamics representation = affine Linear-Blend-Skinning deformation field**
+  (own code, torch-free). Farthest-point control nodes + Gaussian-RBF blend
+  weights + per-frame per-node weighted-least-squares affine transforms. Chosen
+  over per-frame baking (too large) and strict-rigid LBS (a clean linear solve +
+  honest about being an affine approximation). Validated against analytic ground
+  truth; `FitReport` carries the REAL reconstruction error. New
+  `libs/astel_dynamics` (40 tests). The full neural 4DGS video fit stays deferred
+  to a GPU stage ([18-post-m6-roadmap §G1](18-post-m6-roadmap.md)) — the binding,
+  packing, and `.astel` layer are already wired (see row 27).
+
+- **LOD importance = `opacity × exp(Σ log_scales)`** (perceptual proxy, documented
+  as such — not an occlusion-aware optimum). Tiers derived from ONE global sort
+  to **structurally guarantee nested subsets** (top-k ⊂ top-K), so streaming
+  upgrades never re-download. `TIER_BUDGETS` (lowpoly 100k / standard 1M /
+  cinematic 5M) + `PLATFORM_BUDGETS` (mobile/web/console/cinematic). New
+  `libs/astel_lod` (53 tests); producer emits `l3.lod.json` + tier PLYs; web
+  `lod.ts` consumer (20 vitest). Schema `astel.lod/v0`.
+
+- **Scene composition = greedy ground-contact + XZ-AABB no-overlap** on raw numpy
+  gaussian arrays (the `astel_appearance` convention). 1st-percentile ground-drop
+  (robust to stray splats); greedy +X separation (honest, documented limitation —
+  a layout-LLM or global packer is the upgrade). Layout-LLM stage reuses the
+  offline `FixtureAdapter` (no key, no spend). New `libs/astel_scene` (56 tests).
+  Schema `astel.scene-layout/v0`.
+
+- **Engine.json / video honesty:** the video modality no longer silently aliases
+  to the smoke path — `_produce_video` runs a real static reconstruction (honest
+  "L7/4DGS not tracked" note) or a caveated smoke fallback. **No fabricated
+  motion.**
+
+- **Security:** `read_deformation_bin` hardened with an exact file-size check
+  (closes the amplification vector on untrusted `.astel` input). Broader
+  package-reader hardening is a launch P0 ([roadmap N2](18-post-m6-roadmap.md)).
+
+- **Honest finding:** there is **no `.github/` CI** in the repo — gates are run
+  manually. Wiring real CI is the top launch blocker ([roadmap N1](18-post-m6-roadmap.md)).
+
+**Gates (Opus-run end-of-M6 sweep, all green):** 8 Python libs **318** total
+(dynamics 40 · scene 56 · lod 53 · format 34 · splat_io 37 · appearance 25 ·
+solid 37 · eval 36) · pipelines/gpu **112**+3skip · services/api **71**+1skip ·
+apps/web **72** vitest · tsc-b · @astel/manifest + @astel/sdk green · tools/loadtest
+ruff·mypy·self-test. See [session-29 retro](../retros/session-29.md) +
+[18-post-m6-roadmap](18-post-m6-roadmap.md).
+
+**M6 closes the build plan. Next = post-M6: Track N (launch/CI/deploy/monitoring),
+Track G (GPU-real: real 4DGS video, text→multiview, live LOD/scene wiring), Track
+T (fine-tuning, founder-gated on telemetry + cost).**

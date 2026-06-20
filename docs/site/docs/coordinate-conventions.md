@@ -13,8 +13,8 @@ This page summarises the engine-interop transforms defined in
 | Unity | −x | y | z | m | −qx, qy, qz, −qw |
 | Unreal Engine 5 | −z×100 | x×100 | y×100 | cm | −qz, qx, qy, −qw |
 
-For the full derivation and round-trip tests see
-[`docs/architecture/coordinate-conventions.md`](../architecture/coordinate-conventions.md).
+For the full derivation and round-trip tests see the repo reference doc at
+`docs/architecture/coordinate-conventions.md`.
 
 ## Python helpers
 

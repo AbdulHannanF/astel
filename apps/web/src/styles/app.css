@@ -318,3 +318,50 @@
   background: var(--ink-0);
   padding: var(--space-md) var(--space-lg);
 }
+
+/* ---------- App-level error boundary fallback ---------- */
+.app-error {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--space-lg);
+  background: var(--ink-1, #0d0b08);
+}
+.app-error__card {
+  max-width: 520px;
+  padding: var(--space-lg);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--ink-0);
+}
+.app-error__eyebrow {
+  color: var(--accent, #e0a458);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.app-error__title {
+  margin: var(--space-sm) 0;
+  font-size: var(--text-xl);
+  color: var(--text-hi);
+}
+.app-error__body {
+  color: var(--text-lo);
+  margin-bottom: var(--space-md);
+}
+.app-error__detail {
+  display: block;
+  padding: var(--space-sm);
+  border-radius: 8px;
+  background: var(--ink-1, #0d0b08);
+  border: 1px solid var(--line-soft);
+  color: var(--text-faint, var(--text-lo));
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: var(--space-md);
+}
+.app-error__actions {
+  display: flex;
+  gap: var(--space-sm);
+}

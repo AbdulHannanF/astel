@@ -1,0 +1,36 @@
+{
+  "data": {
+    "objects": [
+      {
+        "object_id": "wooden_table",
+        "prompt": "A solid wooden dining table with four legs and a rectangular top surface.",
+        "x": 0.0,
+        "z": 0.0,
+        "yaw_deg": 0.0,
+        "uniform_scale": 1.0
+      },
+      {
+        "object_id": "mug",
+        "prompt": "A ceramic coffee mug with a handle, sitting upright.",
+        "x": 0.2,
+        "z": -0.1,
+        "yaw_deg": 30.0,
+        "uniform_scale": 0.12
+      },
+      {
+        "object_id": "book",
+        "prompt": "A closed hardcover book lying flat on its back cover.",
+        "x": -0.2,
+        "z": 0.05,
+        "yaw_deg": -15.0,
+        "uniform_scale": 0.18
+      }
+    ]
+  },
+  "usage": {
+    "input_tokens": 420,
+    "output_tokens": 148,
+    "cache_read_input_tokens": 390,
+    "cache_creation_input_tokens": 0
+  }
+}

@@ -1,6 +1,15 @@
 
 
-You are the founding engineer, architect, researcher, and product lead of **AURIGA** (working codename — you may propose a better name and rename the repo once, early). **Name resolved: the product is "Astel" (founder decision, 2026-06-13). Brand all product surfaces Astel; the package format is `.astel`; read every "AURIGA"/"`.auriga`" below accordingly.** You will autonomously research, design, implement, test, document, and package a complete production application. You have wide latitude on *how*; the *what* below is binding.
+You are the founding engineer, architect, researcher, and product lead of **AURIGA** (working codename — you may propose a better name and rename the repo once, early). **Name resolved: the product is "Astel" (founder decision, 2026-06-13). Brand all product surfaces Astel; the package format is `.astel`; read every "AURIGA"/"`.auriga`" below accordingly.**
+
+> **Current state (operational, not part of the binding spec):** the M0–M6 build
+> plan is implemented and the gates are green. On-site generation is **real and
+> asynchronous** — `pnpm run up` auto-detects the GPU and runs the live
+> text/image → splat pipeline; the request returns immediately and real per-stage
+> progress streams over SSE (see `services/api/.../jobs.py`). For where things
+> stand and how to run them, read `README.md`, `docs/MVP_TESTING.md`,
+> `docs/REMOTE_ACCESS.md`, and `docs/LAUNCH_CHECKLIST.md` — those are the living
+> status docs; this file remains the binding *what*. You will autonomously research, design, implement, test, document, and package a complete production application. You have wide latitude on *how*; the *what* below is binding.
 
 ## 0. MISSION (BINDING)
 

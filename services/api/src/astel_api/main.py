@@ -18,20 +18,22 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
-from .billing import price_generation, schedule_dict
+from .billing import schedule_dict
 from .config import Settings, get_settings
 from .db import Generation, get_session, init_db
 from .engine import InProcessStubEngine, TaskEngine, TemporalTaskEngine
-from .generation_spec_stage import (
-    apply_spec_scale_to_report,
-    run_generation_spec_stage,
+from .jobs import (
+    JOB_MANAGER,
+    run_production_sync,
+    submit_conditioning,
 )
-from .gpu_producer import produce_artifacts_dispatch
-from .physics_material_stage import run_physics_material_stage
+from .jobs import _l6_json_artifact_path as _l6_json_artifact_path
+from .jobs import _spec_longest_axis_m as _spec_longest_axis_m
 from .schemas import (
     PIPELINE,
     ArtifactRef,
@@ -40,8 +42,12 @@ from .schemas import (
     CreateGenerationRequest,
     GenerationMode,
     GenerationResource,
+    GenerationSummary,
+    LayerStage,
     Modality,
     PricingResource,
+    ProgressEvent,
+    StageMetrics,
     StageSpec,
     TaskStatus,
 )
@@ -132,80 +138,6 @@ def _conditioning_of(
     if row_value in _CONDITIONING_VALUES:
         return row_value  # type: ignore[return-value]
     return None
-
-
-def _spec_longest_axis_m(spec_payload: dict[str, object] | None) -> float | None:
-    """Pull the metric longest-axis estimate (metres) from a successful spec.
-
-    Returns ``None`` unless the Generation Spec stage produced a usable positive
-    size estimate -- so the producer stays honestly ungrounded rather than
-    fabricating a metric scale (CLAUDE.md §10.4). Used to ground the produced
-    asset's L5/L6 mass + package ``meters_per_unit``.
-    """
-    if not spec_payload or spec_payload.get("status") != "ok":
-        return None
-    spec = spec_payload.get("spec")
-    if not isinstance(spec, dict):
-        return None
-    target_scale = spec.get("target_scale")
-    if not isinstance(target_scale, dict):
-        return None
-    value = target_scale.get("longest_axis_m")
-    if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
-        return float(value)
-    return None
-
-
-def _l6_json_artifact_path(
-    task_id: str, store: ArtifactStore, physics_payload: dict[str, object] | None
-) -> Path | None:
-    """Resolve the stored ``l6.json`` path when the physics stage produced one.
-
-    The physics-material stage writes ``l6.json`` only on success (status
-    ``"ok"``); a fixture-miss / skip writes a non-billable note instead. Returns
-    the local path so the GPU producer can bind the L6 layer into the package and
-    run the L6<->L5 mass join, or ``None`` (no L6 data, or a non-local store --
-    the same seam where an S3 store would download to a temp file first).
-    """
-    if not physics_payload or physics_payload.get("status") != "ok":
-        return None
-    return store.path_for(task_id, "l6.json")
-
-
-def _build_and_store_billing(
-    task_id: str,
-    mode: str,
-    refine_of: str | None,
-    store: ArtifactStore,
-    spec_payload: dict[str, object] | None,
-) -> BillingSummary:
-    """Price the generation from delivered artifacts, store + return the ledger.
-
-    The LLM line is folded in only when the Generation Spec stage actually
-    incurred a measured cost this task (text path, fixture hit / live). A refine
-    keyed on a prior preview never runs the spec stage, so it never re-charges
-    it (CLAUDE.md §7).
-    """
-    llm_cost_usd: float | None = None
-    if spec_payload and spec_payload.get("status") == "ok":
-        ledger = spec_payload.get("ledger")
-        if isinstance(ledger, dict):
-            cost = ledger.get("cost_usd")
-            if isinstance(cost, (int, float)):
-                llm_cost_usd = float(cost)
-
-    credit_ledger = price_generation(
-        mode=mode,
-        delivered_artifacts=store.list_names(task_id),
-        llm_cost_usd=llm_cost_usd,
-        refine_of=refine_of,
-    )
-    store.put(
-        task_id,
-        _LEDGER_ARTIFACT,
-        json.dumps(credit_ledger.to_dict(), indent=2).encode("utf-8"),
-    )
-    return BillingSummary.model_validate(credit_ledger.to_dict())
 
 
 def _load_billing(task_id: str, store: ArtifactStore) -> BillingSummary | None:
@@ -321,7 +253,17 @@ async def create_generation(
     store: StoreDep,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> GenerationResource:
-    """Submit a generation. Returns a task id and its SSE events URL."""
+    """Submit a generation. Returns immediately with a queued task + SSE URL.
+
+    Production runs ASYNCHRONOUSLY in a background job (:mod:`astel_api.jobs`):
+    this handler returns as soon as the row is persisted, so the request never
+    blocks on the ~1-2 min GPU run. Real per-stage progress streams over the SSE
+    events endpoint, and ``produced``/``splats``/``billing`` are finalised on the
+    row when the job completes (read them back via ``GET /v1/generations/{id}``).
+
+    The Temporal engine keeps the legacy synchronous-produce path: it produces
+    inline here and the durable workflow drives the SSE.
+    """
     task_id = str(uuid.uuid4())
     row = Generation(
         id=task_id,
@@ -335,65 +277,59 @@ async def create_generation(
     session.add(row)
     await session.commit()
 
-    billing: BillingSummary | None = None
-    try:
-        # Text-pipeline Generation Spec stage (offline by default; founder-gated
-        # for live spend) runs FIRST so its metric size estimate can ground the
-        # produced asset's scale + L5/L6 mass (CLAUDE.md §3 L1, §4: the spec
-        # conditions generation). A refine keyed on a prior preview inherits that
-        # preview's spec, so it is skipped here — the LLM spend (and the credit
-        # line) belong to the preview, not the refine (CLAUDE.md §7).
-        spec_payload: dict[str, object] | None = None
-        physics_payload: dict[str, object] | None = None
-        if body.refine_of is None:
-            spec_payload = run_generation_spec_stage(
-                task_id, body.modality.value, body.prompt, store, settings
-            )
-            # L6 physics-material reasons over the Generation Spec (not the
-            # produced asset), so it runs BEFORE produce: this lets the producer
-            # bind the l6.json layer into the .astel package AND compute the
-            # L6<->L5 mass join (write_layer_stack reads l6.json from its output
-            # dir). Running it after produce -- as it did previously -- left L6
-            # unbound in every shipped package and the mass join firing only in
-            # tests. A refine keyed on a preview inherits that preview's L6 and so
-            # is skipped here (the LLM spend belongs to the preview, CLAUDE.md §7).
-            physics_payload = run_physics_material_stage(
-                task_id, body.modality.value, spec_payload, store, settings
-            )
-
-        production = produce_artifacts_dispatch(
+    if settings.engine == "temporal":
+        # Legacy synchronous path (durable-engine deployment): produce inline,
+        # persist the outcome, return the priced resource. The Temporal workflow
+        # drives the SSE rail separately.
+        result = run_production_sync(
             task_id,
             body.modality.value,
             body.prompt,
             store,
+            settings,
             capture_id=body.capture_id,
-            longest_axis_m=_spec_longest_axis_m(spec_payload),
-            l6_json_path=_l6_json_artifact_path(task_id, store, physics_payload),
+            refine_of=body.refine_of,
+            mode=body.mode.value,
         )
-        row.produced = True
-        row.splats = production.get("splats")
-        row.production_error = None
-        conditioning = production.get("conditioning")
-        row.conditioning = conditioning if isinstance(conditioning, str) else "none"
+        row.produced = result.produced
+        row.splats = result.splats
+        row.production_error = result.error
+        row.conditioning = result.conditioning
+        if result.billing is not None:
+            row.credits = result.billing.total_credits
         await session.commit()
+        return GenerationResource(
+            id=task_id,
+            modality=body.modality,
+            prompt=body.prompt,
+            status=TaskStatus.QUEUED,
+            created_at=row.created_at.isoformat(),
+            events_url=f"/v1/generations/{task_id}/events",
+            artifacts=_artifacts_for(task_id, store),
+            mode=body.mode,
+            refine_of=body.refine_of,
+            billing=result.billing,
+            conditioning=_conditioning_of(result.conditioning),
+        )
 
-        if body.refine_of is None:
-            # Thread the LLM size estimate into the freshly-written quality report
-            # (best-effort scale patch; the L6 layer is already bound by produce).
-            apply_spec_scale_to_report(task_id, store, spec_payload)
-        # Price the generation by its billing tier and store the credit ledger.
-        billing = _build_and_store_billing(
-            task_id, body.mode.value, body.refine_of, store, spec_payload
-        )
-        row.credits = billing.total_credits
-        await session.commit()
-    except Exception as exc:  # production failure must not fail the submit
-        logger.exception("artifact production failed for %s", task_id)
-        row.produced = False
-        row.splats = None
-        row.production_error = str(exc)
-        row.conditioning = "none"
-        await session.commit()
+    # Default async path: persist a best-effort conditioning label (so the Truth
+    # Meter pill is honest immediately), kick off the background job, and return.
+    conditioning = submit_conditioning(
+        body.modality.value, body.prompt, store, body.capture_id
+    )
+    row.conditioning = conditioning
+    await session.commit()
+
+    JOB_MANAGER.submit(
+        task_id,
+        body.modality.value,
+        body.prompt,
+        store,
+        settings,
+        capture_id=body.capture_id,
+        refine_of=body.refine_of,
+        mode=body.mode.value,
+    )
 
     return GenerationResource(
         id=task_id,
@@ -402,12 +338,55 @@ async def create_generation(
         status=TaskStatus.QUEUED,
         created_at=row.created_at.isoformat(),
         events_url=f"/v1/generations/{task_id}/events",
-        artifacts=_artifacts_for(task_id, store),
+        artifacts=[],
         mode=body.mode,
         refine_of=body.refine_of,
-        billing=billing,
-        conditioning=_conditioning_of(row.conditioning),
+        billing=None,
+        conditioning=_conditioning_of(conditioning),
     )
+
+
+@app.get(
+    "/v1/generations",
+    tags=["generations"],
+    response_model=list[GenerationSummary],
+)
+async def list_generations(
+    session: SessionDep, store: StoreDep, limit: int = 200
+) -> list[GenerationSummary]:
+    """List produced generations, newest first — the gallery catalog source.
+
+    This is what makes every generated splat show up in the gallery by default:
+    the gallery fetches this list and renders one tile per asset. Only rows that
+    actually produced their viewable ``l3.ply`` on disk are returned, so the
+    catalog never links to a failed or empty task. Capped at ``limit`` (1..500,
+    default 200) newest rows.
+    """
+    capped = max(1, min(limit, 500))
+    result = await session.execute(
+        select(Generation)
+        .where(Generation.produced.is_(True))
+        .order_by(Generation.created_at.desc())
+        .limit(capped)
+    )
+    summaries: list[GenerationSummary] = []
+    for row in result.scalars().all():
+        # Skip rows whose viewable artifact is gone (store pruned, partial write).
+        if store.path_for(row.id, "l3.ply") is None:
+            continue
+        summaries.append(
+            GenerationSummary(
+                id=row.id,
+                modality=Modality(row.modality),
+                prompt=row.prompt,
+                created_at=row.created_at.isoformat(),
+                produced=row.produced,
+                splats=row.splats,
+                conditioning=_conditioning_of(row.conditioning),
+                has_asset=True,
+            )
+        )
+    return summaries
 
 
 @app.get("/v1/generations/{task_id}", tags=["generations"])
@@ -432,46 +411,105 @@ async def get_generation(
     )
 
 
+def _terminal_event_from_row(row: Generation | None) -> ProgressEvent:
+    """Rebuild a single terminal :class:`ProgressEvent` from a persisted row.
+
+    Used when an SSE client connects to a job that is no longer held in memory
+    (finished and evicted, or the process restarted): the true outcome still
+    lives on the row, so the reconnect resolves honestly rather than hanging.
+    """
+    count = len(PIPELINE)
+    if row is None or not row.produced:
+        return ProgressEvent(
+            task_id=row.id if row is not None else "",
+            status=TaskStatus.FAILED,
+            stage=None,
+            stage_label=None,
+            stage_index=0,
+            stage_count=count,
+            progress=0.0,
+            message=(
+                row.production_error
+                if row is not None and row.production_error
+                else "Generation produced no artifacts"
+            ),
+        )
+    return ProgressEvent(
+        task_id=row.id,
+        status=TaskStatus.SUCCEEDED,
+        stage=LayerStage.L3_REFINED,
+        stage_label="Complete",
+        stage_index=count,
+        stage_count=count,
+        progress=1.0,
+        message="Asset ready",
+        metrics=StageMetrics(splats=row.splats),
+    )
+
+
 @app.get("/v1/generations/{task_id}/events", tags=["generations"])
 async def generation_events(
-    task_id: str, session: SessionDep, engine: EngineDep
+    task_id: str,
+    session: SessionDep,
+    engine: EngineDep,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> EventSourceResponse:
     """Stream pipeline progress as Server-Sent Events.
 
-    Each ``message`` event carries a JSON :class:`ProgressEvent`. The connection
-    closes when the engine reaches a terminal status. The DB row's status is
-    advanced to RUNNING on first connect and SUCCEEDED on completion.
+    Each ``message`` event carries a JSON :class:`ProgressEvent`; the connection
+    closes on a terminal status. The default path streams the *real* events
+    published by the background job (:mod:`astel_api.jobs`); a reconnect to an
+    already-evicted job replays a single terminal event from the row. The
+    Temporal engine instead drives the rail from its durable workflow.
     """
     row = await session.get(Generation, task_id)
     if row is None:
         raise HTTPException(status_code=404, detail="generation not found")
 
-    async def event_stream() -> AsyncIterator[dict[str, str]]:
-        async with get_session_cm() as inner:
-            db_row = await inner.get(Generation, task_id)
-            if db_row is not None and db_row.status == TaskStatus.QUEUED.value:
-                db_row.status = TaskStatus.RUNNING.value
-                await inner.commit()
+    if settings.engine == "temporal":
 
-            produced = db_row.produced if db_row is not None else True
-            splats = db_row.splats if db_row is not None else None
-            production_error = (
-                db_row.production_error if db_row is not None else None
-            )
-
-            async for event in engine.run(
-                task_id,
-                produced=produced,
-                splats=splats,
-                error=production_error,
-            ):
-                yield {"event": "progress", "data": event.model_dump_json()}
-                terminal = event.status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED)
-                if terminal and db_row is not None:
-                    db_row.status = event.status.value
+        async def temporal_stream() -> AsyncIterator[dict[str, str]]:
+            async with get_session_cm() as inner:
+                db_row = await inner.get(Generation, task_id)
+                if db_row is not None and db_row.status == TaskStatus.QUEUED.value:
+                    db_row.status = TaskStatus.RUNNING.value
                     await inner.commit()
 
-    return EventSourceResponse(event_stream())
+                produced = db_row.produced if db_row is not None else True
+                splats = db_row.splats if db_row is not None else None
+                production_error = (
+                    db_row.production_error if db_row is not None else None
+                )
+
+                async for event in engine.run(
+                    task_id,
+                    produced=produced,
+                    splats=splats,
+                    error=production_error,
+                ):
+                    yield {"event": "progress", "data": event.model_dump_json()}
+                    terminal = event.status in (
+                        TaskStatus.SUCCEEDED,
+                        TaskStatus.FAILED,
+                    )
+                    if terminal and db_row is not None:
+                        db_row.status = event.status.value
+                        await inner.commit()
+
+        return EventSourceResponse(temporal_stream())
+
+    async def job_stream() -> AsyncIterator[dict[str, str]]:
+        if JOB_MANAGER.has(task_id):
+            async for event in JOB_MANAGER.stream(task_id):
+                yield {"event": "progress", "data": event.model_dump_json()}
+            return
+        # Not in memory: rebuild the terminal state from the persisted row.
+        async with get_session_cm() as inner:
+            db_row = await inner.get(Generation, task_id)
+        event = _terminal_event_from_row(db_row)
+        yield {"event": "progress", "data": event.model_dump_json()}
+
+    return EventSourceResponse(job_stream())
 
 
 @app.get("/v1/generations/{task_id}/artifacts/{name}", tags=["generations"])

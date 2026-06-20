@@ -45,6 +45,9 @@ def test_generative_report_is_honest_about_generation() -> None:
         image_path="x.webp",
     )
     # Generated => no measured geometry or metric scale, fully generated provenance.
+    # origin MUST be "generated": the Truth Meter reads this field for its pill,
+    # and "measured" would falsely claim ground-truth reconstruction (CLAUDE.md §8.4).
+    assert report["origin"] == "generated"
     assert report["geometric_error"]["chamfer_mm_vs_l1"] is None
     assert report["scale"]["longest_axis_m"] is None
     assert report["provenance"]["generated_ratio"] == 1.0

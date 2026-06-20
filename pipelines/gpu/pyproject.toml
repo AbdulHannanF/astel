@@ -13,6 +13,8 @@ dependencies = [
     "astel-format",
     "astel-solid",
     "astel-appearance",
+    "astel-dynamics",
+    "astel-lod",
     "torchvision>=0.26.0",
     "safetensors>=0.8.0",
     "tqdm>=4.68.2",
@@ -36,6 +38,8 @@ astel-splat-io = { path = "../../libs/astel_splat_io", editable = true }
 astel-format = { path = "../../libs/astel_format", editable = true }
 astel-solid = { path = "../../libs/astel_solid", editable = true }
 astel-appearance = { path = "../../libs/astel_appearance", editable = true }
+astel-dynamics = { path = "../../libs/astel_dynamics", editable = true }
+astel-lod = { path = "../../libs/astel_lod", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -84,6 +88,10 @@ module = [
     "astel_solid.*",
     "astel_appearance",
     "astel_appearance.*",
+    "astel_dynamics",
+    "astel_dynamics.*",
+    "astel_lod",
+    "astel_lod.*",
     "triposplat",  # vendored MIT repo, path-injected at runtime (external/TripoSplat)
     "triposplat.*",
 ]

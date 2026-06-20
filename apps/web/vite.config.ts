@@ -13,7 +13,10 @@ export default defineConfig({
       "/v1": { target: API_TARGET, changeOrigin: true },
       "/healthz": { target: API_TARGET, changeOrigin: true },
       "/openapi.json": { target: API_TARGET, changeOrigin: true },
-      "/docs": { target: API_TARGET, changeOrigin: true },
+      // NOTE: do NOT proxy "/docs" — it collides with the SPA's own /docs route
+      // (DocsPage). Proxying it makes a hard load / reload of /docs serve the
+      // API's Swagger UI instead of the app. The API's Swagger UI is reachable
+      // directly at the gateway origin (:8000/docs) when needed.
     },
   },
   test: {

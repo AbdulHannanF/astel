@@ -146,6 +146,10 @@
   color: var(--text-lo);
   margin-left: 3px;
 }
+/* "Not measured" placeholder: faint, so it reads as honest absence not a value. */
+.metric__value--na {
+  color: var(--text-faint, var(--text-lo));
+}
 
 /* Scale confidence */
 .confidence {

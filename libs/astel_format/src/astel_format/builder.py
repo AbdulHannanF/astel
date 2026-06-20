@@ -26,6 +26,7 @@ from astel_format.models import (
     LayerAppearance,
     LayerArticulation,
     LayerCollision,
+    LayerDynamics,
     LayerEntry,
     LayerIsosurface,
     LayerPhysicsMaterial,
@@ -116,6 +117,10 @@ def build_minimal_package(
     # L6 physics-material layer (optional; emit only when l6_regions_path given)
     l6_regions_path: str | Path | None = None,
     l6_articulation: list[LayerArticulation] | None = None,
+    # L7 dynamics layer (optional; both files must be supplied together)
+    l7_deformation_path: str | Path | None = None,
+    l7_timeline_path: str | Path | None = None,
+    l7_representation: str | None = None,
 ) -> AstelPackage:
     """Build a minimal valid :class:`AstelPackage` from L3 (+ optional L0/L5/L6).
 
@@ -163,6 +168,17 @@ def build_minimal_package(
     l6_articulation:
         Optional list of :class:`LayerArticulation` entries describing
         separable joints between regions.
+    l7_deformation_path:
+        Optional path to the deformation field / 4DGS keyframe deltas
+        (``.bin``).  Must be supplied together with ``l7_timeline_path``; if
+        only one of the pair is given a :exc:`ValueError` is raised.
+    l7_timeline_path:
+        Optional path to the dynamics timeline JSON (``timeline.json``).
+        Must be supplied together with ``l7_deformation_path``.
+    l7_representation:
+        How motion is encoded; one of ``"deformation_field"``,
+        ``"keyframes"``, or ``"baked_per_frame"``.  Defaults to
+        ``"deformation_field"`` when the L7 layer is emitted.
     """
     if len(l3_provenance) != l3_count:
         raise ValueError(
@@ -409,6 +425,48 @@ def build_minimal_package(
             files=l6_file_refs,
         )
         layers_kwargs["l6"] = l6_layer
+
+    # --- L7 dynamics layer ---
+    # Both deformation and timeline files are required together; a partial
+    # supply is an error (mirrors the all-or-nothing L0 validation style).
+    have_l7_deformation = l7_deformation_path is not None
+    have_l7_timeline = l7_timeline_path is not None
+    if have_l7_deformation != have_l7_timeline:
+        missing = "l7_timeline_path" if have_l7_deformation else "l7_deformation_path"
+        supplied = "l7_deformation_path" if have_l7_deformation else "l7_timeline_path"
+        raise ValueError(
+            f"{missing} must be provided when {supplied} is given; "
+            "both files are required for a meaningful dynamics layer"
+        )
+    if have_l7_deformation and have_l7_timeline:
+        l7_def = Path(l7_deformation_path)  # type: ignore[arg-type]
+        l7_tl = Path(l7_timeline_path)  # type: ignore[arg-type]
+        l7_def_pkg_path = f"layers/l7_dynamics/{l7_def.name}"
+        l7_tl_pkg_path = f"layers/l7_dynamics/{l7_tl.name}"
+        files[l7_def_pkg_path] = l7_def.read_bytes()
+        files[l7_tl_pkg_path] = l7_tl.read_bytes()
+
+        l7_file_refs: list[FileRef] = [
+            FileRef(path=l7_def_pkg_path, role="deformation", format="bin"),
+            FileRef(path=l7_tl_pkg_path, role="timeline", format="json"),
+        ]
+
+        dynamics = LayerDynamics.model_validate(
+            {
+                "representation": l7_representation
+                if l7_representation is not None
+                else "deformation_field",
+                "deformation_path": l7_def_pkg_path,
+                "timeline_path": l7_tl_pkg_path,
+            }
+        )
+        layers_kwargs["l7"] = LayerEntry(
+            kind="dynamics",
+            status="present",
+            derived_from=["l3"],
+            dynamics=dynamics,
+            files=l7_file_refs,
+        )
 
     manifest = Manifest(
         format_version="0.1.0",

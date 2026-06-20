@@ -64,6 +64,34 @@ describe("TruthMeter", () => {
     expect(screen.queryByText(/not from your input/i)).not.toBeInTheDocument();
   });
 
+  it("renders null geometry/scale metrics as 'not measured' without crashing", () => {
+    // A real generated asset: chamfer / longest_axis / confidence are all null
+    // (no ground truth, no metric grounding). This used to crash the whole app
+    // to a black screen via `null.toFixed()`.
+    const api: ApiQualityReport = {
+      schema: "astel.quality-report/v0",
+      origin: "generated",
+      modality: "generative-image/triposplat-l2->2dgs-l3",
+      splats: 262144,
+      geometric_error: { chamfer_mm_vs_l1: null, method: null },
+      fidelity: { psnr_db: 26.0, ssim: null, lpips: null, n_holdout_views: 4 },
+      scale: { longest_axis_m: null, confidence: null, method: "estimate" },
+      provenance: { measured_ratio: 0, generated_ratio: 1 },
+      caveats: ["Fully GENERATED asset. Nothing here is measured against reality."],
+    };
+    const mapped = mapApiReport(api, "gen-1");
+
+    render(<TruthMeter report={mapped} errored={false} />);
+    // The geometric error + longest axis tiles fall back to "not measured".
+    expect(screen.getAllByText(/not measured/i).length).toBeGreaterThanOrEqual(2);
+    // Scale confidence shows n/a, not a fabricated 0%.
+    expect(screen.getByText("n/a")).toBeInTheDocument();
+    // The real self-consistency PSNR still renders.
+    expect(screen.getByText(/26\.0/)).toBeInTheDocument();
+    // Splats still render (262144 -> 262k).
+    expect(screen.getByText(/262/)).toBeInTheDocument();
+  });
+
   it("shows a STUB pill and caveat for a non-measured API report", () => {
     const api: ApiQualityReport = {
       schema: "astel.quality-report/v0",
