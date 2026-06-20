@@ -8,19 +8,27 @@ empty space. The L3 distillation FREEZES positions and is trained to *reproduce*
 the L2 appearance, so it faithfully reproduces those floaters instead of removing
 them. The fix is to delete the junk before it is baked in.
 
-This module is a torch-native, scale-invariant cleaner. Every filter is relative
-to the cloud's own distribution (median scale, global mean/std of neighbour
-distance), so it works whether the cloud is in TripoSplat's native units or a
-normalised unit frame, and on both 3D gaussians (L2) and flat 2DGS surfels (L3):
+GEOMETRY-PRESERVING BY DESIGN. The cardinal rule (founder, 2026-06-20): a cleaner
+that eats real geometry is worse than no cleaner — "we have no use for a broken
+splat". So every filter here is conservative and, crucially, **density-agnostic**
+where it matters:
 
-* **opacity floor** — drop near-transparent splats (the dark smoky fuzz).
+* **opacity floor** — drop near-invisible splats (the dark smoky fuzz).
 * **elongation cap** — drop needles. Elongation is ``s_max / s_mid`` (the ratio
-  of the two LARGEST extents), so an intentionally-flat surfel disc
-  (``s_min ≈ 0``, ``s_mid ≈ s_max``) is NOT penalised — only genuine slivers are.
+  of the two LARGEST extents), so a flat surfel disc (``s_min ≈ 0``,
+  ``s_mid ≈ s_max``) is NOT penalised — only genuine slivers are.
 * **oversize cap** — drop blobs whose largest extent dwarfs the median (the halo).
-* **statistical outlier removal** — drop splats whose mean distance to their k
-  nearest neighbours is an outlier vs the whole cloud (the disconnected floaters).
-  Same definition as Open3D's ``remove_statistical_outlier``; KD-tree via scipy.
+* **connected-component removal** — keep the large connected cluster(s); drop
+  only floaters that are *spatially disconnected* from the body. This is
+  density-agnostic: thin/weak surface regions stay because they remain connected
+  to the main object, no matter how sparse they are.
+
+What we deliberately do NOT do by default: **statistical outlier removal** (SOR).
+SOR thresholds on a GLOBAL mean+std of neighbour distance, so on a real generated
+cloud — dense where there is detail, sparse on smooth faces — it flags whole
+legitimate low-density regions as outliers and deletes them (measured: ~40% of a
+real helmet vanished). It remains available, opt-in, for the rare uniform-density
+case; it is OFF by default.
 
 HONESTY: cleaning removes GENERATED junk, never measured reality — this only ever
 runs on generated L2/L3 clouds. Every stage's removal count is returned so the
@@ -43,28 +51,46 @@ _EPS = 1e-8
 
 @dataclass(frozen=True)
 class CleanConfig:
-    """Thresholds for :func:`clean_gaussians`. All scale-invariant / relative.
+    """Thresholds for :func:`clean_gaussians`. Conservative and geometry-safe.
 
-    Defaults are conservative — tuned to remove obvious floaters without eating
-    into legitimate surface detail of an otherwise-good object. Override per-run
-    via the environment (see :meth:`from_env`) without touching code.
+    Defaults remove obvious floaters without eating into legitimate surface
+    detail. Override per-run via the environment (see :meth:`from_env`).
     """
 
     #: Keep splats with activated opacity >= this. Kills faint dark "smoke".
-    opacity_min: float = 0.06
+    #: Low (0.04): generated opaque objects rarely have legitimate sub-0.04 splats.
+    opacity_min: float = 0.04
     #: Keep splats with ``s_max / s_mid`` <= this. Kills "needle" streaks while
     #: leaving flat surfels (small ``s_min``, balanced ``s_mid``/``s_max``) alone.
-    max_elongation: float = 12.0
+    #: High (16): only genuine slivers exceed it; honest surface splats do not.
+    max_elongation: float = 16.0
     #: Keep splats whose largest extent <= ``max_scale_factor * median(s_max)``.
     #: Kills the few oversized translucent blobs that form the halo.
-    max_scale_factor: float = 10.0
-    #: k for statistical outlier removal (neighbours per splat, self excluded).
+    max_scale_factor: float = 12.0
+
+    #: Connected-component floater removal — the default spatial filter. Density-
+    #: agnostic: keeps any cluster reachable through the point graph, so thin/weak
+    #: *attached* geometry survives and only disconnected floaters are dropped.
+    components_enabled: bool = True
+    #: Neighbours per splat used to build the connectivity graph.
+    cc_neighbors: int = 16
+    #: Two splats are "connected" if within ``cc_radius_factor * median_nn_dist``.
+    #: Generous (6) so the real body never fragments; a too-large value only
+    #: under-cleans (safe), a too-small one would split the body (but large
+    #: fragments are still kept, so no geometry is lost either way).
+    cc_radius_factor: float = 6.0
+    #: Keep components whose size >= ``cc_min_cluster_fraction * largest``.
+    cc_min_cluster_fraction: float = 0.01
+    #: Absolute floor: never keep a component smaller than this many splats.
+    cc_min_cluster_size: int = 64
+
+    #: Statistical outlier removal — OFF by default (``sor_iters = 0``). Uses a
+    #: GLOBAL density threshold that deletes legitimate low-density regions on real
+    #: generated clouds; opt-in only, for uniform-density inputs.
     sor_neighbors: int = 16
-    #: Keep splats whose mean-kNN-distance <= ``mean + std_ratio * std`` over the
-    #: whole cloud. Lower == more aggressive. Kills disconnected floaters.
     sor_std_ratio: float = 2.0
-    #: Repeat the SOR pass this many times (each pass tightens the distribution).
-    sor_iters: int = 2
+    sor_iters: int = 0
+
     #: Master switch. ``False`` disables all cleaning (passes the cloud through).
     enabled: bool = True
 
@@ -72,11 +98,13 @@ class CleanConfig:
     def from_env(cls, env: dict[str, str] | None = None) -> CleanConfig:
         """Build a config from ``ASTEL_CLEAN*`` env vars, falling back to defaults.
 
-        Lets the founder dial cleanup strength per run without editing code:
-        ``ASTEL_CLEAN=0`` disables it; ``ASTEL_CLEAN_OPACITY_MIN``,
-        ``ASTEL_CLEAN_MAX_ELONGATION``, ``ASTEL_CLEAN_MAX_SCALE_FACTOR``,
-        ``ASTEL_CLEAN_SOR_NEIGHBORS``, ``ASTEL_CLEAN_SOR_STD_RATIO``,
-        ``ASTEL_CLEAN_SOR_ITERS`` override individual thresholds.
+        Lets the founder dial cleanup strength per run without editing code.
+        ``ASTEL_CLEAN=0`` disables it. Per-threshold overrides:
+        ``ASTEL_CLEAN_OPACITY_MIN``, ``ASTEL_CLEAN_MAX_ELONGATION``,
+        ``ASTEL_CLEAN_MAX_SCALE_FACTOR``, ``ASTEL_CLEAN_COMPONENTS`` (0/1),
+        ``ASTEL_CLEAN_CC_RADIUS_FACTOR``, ``ASTEL_CLEAN_CC_MIN_FRACTION``,
+        ``ASTEL_CLEAN_CC_MIN_SIZE``, ``ASTEL_CLEAN_SOR_NEIGHBORS``,
+        ``ASTEL_CLEAN_SOR_STD_RATIO``, ``ASTEL_CLEAN_SOR_ITERS`` (>0 enables SOR).
         """
         env = env if env is not None else dict(os.environ)
         d = cls()
@@ -105,6 +133,13 @@ class CleanConfig:
             opacity_min=_f("ASTEL_CLEAN_OPACITY_MIN", d.opacity_min),
             max_elongation=_f("ASTEL_CLEAN_MAX_ELONGATION", d.max_elongation),
             max_scale_factor=_f("ASTEL_CLEAN_MAX_SCALE_FACTOR", d.max_scale_factor),
+            components_enabled=_flag("ASTEL_CLEAN_COMPONENTS", d.components_enabled),
+            cc_neighbors=_i("ASTEL_CLEAN_CC_NEIGHBORS", d.cc_neighbors),
+            cc_radius_factor=_f("ASTEL_CLEAN_CC_RADIUS_FACTOR", d.cc_radius_factor),
+            cc_min_cluster_fraction=_f(
+                "ASTEL_CLEAN_CC_MIN_FRACTION", d.cc_min_cluster_fraction
+            ),
+            cc_min_cluster_size=_i("ASTEL_CLEAN_CC_MIN_SIZE", d.cc_min_cluster_size),
             sor_neighbors=_i("ASTEL_CLEAN_SOR_NEIGHBORS", d.sor_neighbors),
             sor_std_ratio=_f("ASTEL_CLEAN_SOR_STD_RATIO", d.sor_std_ratio),
             sor_iters=_i("ASTEL_CLEAN_SOR_ITERS", d.sor_iters),
@@ -148,6 +183,67 @@ def oversize_mask(scales: torch.Tensor, max_scale_factor: float) -> torch.Tensor
     return s_max <= median * max_scale_factor
 
 
+def connected_component_mask(
+    means: torch.Tensor,
+    *,
+    nb_neighbors: int,
+    radius_factor: float,
+    min_cluster_fraction: float,
+    min_cluster_size: int,
+) -> torch.Tensor:
+    """Keep splats in large connected clusters; drop disconnected floaters.
+
+    Builds a k-NN graph, links pairs closer than ``radius_factor`` times the
+    cloud's median nearest-neighbour distance (so the link radius adapts to point
+    spacing), labels connected components, and keeps every component whose size is
+    at least ``max(min_cluster_size, min_cluster_fraction * largest_component)``.
+
+    This is DENSITY-AGNOSTIC: a thin or weakly-sampled but *attached* surface
+    region stays because it remains graph-connected to the body, unlike global
+    statistical outlier removal which would delete it. Floaters sit in their own
+    small components and are dropped. Degrades safely — if the body fragments, the
+    large fragments are all kept, so no real geometry is lost (only under-cleaned).
+    """
+    n = int(means.shape[0])
+    if n <= nb_neighbors or n < 2:
+        return torch.ones(n, dtype=torch.bool, device=means.device)
+    try:
+        from scipy.sparse import csr_matrix  # noqa: PLC0415
+        from scipy.sparse.csgraph import connected_components  # noqa: PLC0415
+        from scipy.spatial import cKDTree  # noqa: PLC0415
+    except ImportError:
+        return torch.ones(n, dtype=torch.bool, device=means.device)
+
+    pts = means.detach().cpu().to(torch.float64).numpy()
+    k = min(nb_neighbors, n - 1)
+    tree = cKDTree(pts)
+    dist, idx = tree.query(pts, k=k + 1, workers=-1)  # self in column 0
+    dist = np.atleast_2d(dist)
+    idx = np.atleast_2d(idx)
+
+    nn = dist[:, 1]  # nearest non-self neighbour distance per point
+    positive = nn[nn > 0]
+    if positive.size == 0:
+        return torch.ones(n, dtype=torch.bool, device=means.device)
+    radius = float(np.median(positive)) * radius_factor
+
+    neigh_dist = dist[:, 1:]
+    neigh_idx = idx[:, 1:]
+    edge_mask = neigh_dist <= radius
+    rows = np.repeat(np.arange(n), k)[edge_mask.ravel()]
+    cols = neigh_idx.ravel()[edge_mask.ravel()]
+    data = np.ones(rows.shape[0], dtype=np.uint8)
+    graph = csr_matrix((data, (rows, cols)), shape=(n, n))
+
+    _, labels = connected_components(graph, directed=False)
+    sizes = np.bincount(labels)
+    largest = int(sizes.max())
+    threshold = max(min_cluster_size, int(min_cluster_fraction * largest))
+    keep_labels = np.flatnonzero(sizes >= threshold)
+    keep_np = np.isin(labels, keep_labels)
+    return torch.from_numpy(keep_np).to(means.device)
+
+
 def _knn_mean_distance(points: np.ndarray, k: int) -> np.ndarray:
     """Mean distance from each point to its ``k`` nearest neighbours (self excl.).
 
@@ -181,8 +277,10 @@ def statistical_outlier_mask(
     """Keep splats whose mean-kNN-distance is not a global outlier (``[N]`` bool).
 
     Threshold = ``mean + std_ratio * std`` of the per-splat mean-kNN distances,
-    matching Open3D's ``remove_statistical_outlier``. Disconnected floaters sit
-    far from everything, so their mean-kNN distance is large and they are dropped.
+    matching Open3D's ``remove_statistical_outlier``. WARNING: density-sensitive —
+    deletes legitimate low-density surface on non-uniform generated clouds. Used
+    only when explicitly enabled (``sor_iters > 0``); prefer
+    :func:`connected_component_mask`.
     """
     n = int(means.shape[0])
     if n <= nb_neighbors:
@@ -219,11 +317,12 @@ def clean_gaussians(
 ) -> tuple[GaussianParams, dict[str, Any]]:
     """Remove floaters / needles / blobs from a generated gaussian cloud.
 
-    Applies, in order: opacity floor → elongation cap → oversize cap → (optional)
-    statistical outlier removal. Cheap per-splat filters run first so the KD-tree
-    in SOR operates on the already-thinned cloud. ``spatial=False`` skips SOR —
-    used for the cheap final L3 pass, where positions are unchanged from the
-    already-SOR'd L2 input so re-running it is wasted work.
+    Applies, in order: opacity floor → elongation cap → oversize cap → (spatial)
+    connected-component floater removal → (spatial, opt-in) statistical outlier
+    removal. Cheap per-splat filters run first so the KD-trees operate on the
+    already-thinned cloud. ``spatial=False`` skips both graph passes — used for
+    the cheap final L3 pass, where positions are unchanged from the already-
+    cleaned L2 input so re-running them is wasted work.
 
     Returns ``(cleaned_params, stats)``. ``stats`` records the input count, the
     splats removed at each stage (``-1`` == stage skipped to avoid emptying the
@@ -238,6 +337,7 @@ def clean_gaussians(
         "opacity_removed": 0,
         "elongation_removed": 0,
         "oversize_removed": 0,
+        "components_removed": 0,
         "spatial_outliers_removed": 0,
         "config": asdict(config),
     }
@@ -266,6 +366,19 @@ def clean_gaussians(
         stats,
         "oversize_removed",
     )
+    if spatial and config.components_enabled:
+        params = _apply(
+            params,
+            connected_component_mask(
+                params.means,
+                nb_neighbors=config.cc_neighbors,
+                radius_factor=config.cc_radius_factor,
+                min_cluster_fraction=config.cc_min_cluster_fraction,
+                min_cluster_size=config.cc_min_cluster_size,
+            ),
+            stats,
+            "components_removed",
+        )
     if spatial and config.sor_iters > 0 and config.sor_neighbors > 0:
         removed = 0
         for _ in range(config.sor_iters):

@@ -86,25 +86,35 @@ real object — faint dark "smoke", oversized translucent halo blobs, elongated
 "needle" streaks, and disconnected floater clusters. Because the L3 distillation
 freezes positions and learns to *reproduce* the L2 appearance, it would otherwise
 bake those floaters into the final asset. The generative path therefore runs a
-scale-invariant cleanup (`pipelines/gpu/.../splat_clean.py`) on the L2 cloud
+**geometry-preserving** cleanup (`pipelines/gpu/.../splat_clean.py`) on the L2 cloud
 **before** distillation (so the distillation targets — and the framing
-normalization — are clean) plus a cheap final pass on L3. Filters: opacity floor,
-elongation cap (needles; leaves flat surfels alone), oversize cap (halo blobs),
-and statistical outlier removal (disconnected floaters, KD-tree). Every stage's
-removal count is logged into the run metrics (`l2_clean` / `l3_clean`) — nothing is
-dropped silently.
+normalization — are clean) plus a cheap final pass on L3.
+
+Filters: opacity floor (smoke), elongation cap (needles; leaves flat surfels
+alone), oversize cap (halo blobs), and **connected-component removal** — keep the
+large connected cluster(s), drop only floaters that are *spatially disconnected*
+from the body. The cardinal rule is **never delete real geometry**: connected
+components is density-agnostic, so a thin or weakly-sampled but *attached* surface
+region survives (it's still graph-connected), and worst case the cleaner
+under-cleans rather than eating the object. (Statistical outlier removal — global
+density threshold — is **off by default**: it deletes legitimate low-density
+regions on real generated clouds; it removed ~40% of a real helmet. It's opt-in via
+`ASTEL_CLEAN_SOR_ITERS`.) Every stage's removal count is logged into the run
+metrics (`l2_clean` / `l3_clean`) — nothing is dropped silently.
 
 Cleanup is **on by default**. Tune per run via env vars (no code change):
 
 | Env var | Default | Effect |
 |---|---|---|
 | `ASTEL_CLEAN` | `1` | `0`/`off` disables all cleanup |
-| `ASTEL_CLEAN_OPACITY_MIN` | `0.06` | drop splats fainter than this (raise to cut more smoke) |
-| `ASTEL_CLEAN_MAX_ELONGATION` | `12` | drop needles above this `s_max/s_mid` (lower = stricter) |
-| `ASTEL_CLEAN_MAX_SCALE_FACTOR` | `10` | drop blobs larger than `factor × median` extent |
-| `ASTEL_CLEAN_SOR_NEIGHBORS` | `16` | k for statistical outlier removal |
-| `ASTEL_CLEAN_SOR_STD_RATIO` | `2.0` | outlier threshold = `mean + ratio × std` (lower = stricter) |
-| `ASTEL_CLEAN_SOR_ITERS` | `2` | SOR passes |
+| `ASTEL_CLEAN_OPACITY_MIN` | `0.04` | drop splats fainter than this (raise to cut more smoke) |
+| `ASTEL_CLEAN_MAX_ELONGATION` | `16` | drop needles above this `s_max/s_mid` (lower = stricter) |
+| `ASTEL_CLEAN_MAX_SCALE_FACTOR` | `12` | drop blobs larger than `factor × median` extent |
+| `ASTEL_CLEAN_COMPONENTS` | `1` | `0` disables connected-component floater removal |
+| `ASTEL_CLEAN_CC_RADIUS_FACTOR` | `6` | link radius = `factor × median NN dist` (lower = stricter, risks fragmenting) |
+| `ASTEL_CLEAN_CC_MIN_FRACTION` | `0.01` | keep components ≥ this fraction of the largest |
+| `ASTEL_CLEAN_CC_MIN_SIZE` | `64` | absolute min splats to keep a component |
+| `ASTEL_CLEAN_SOR_ITERS` | `0` | >0 enables statistical outlier removal (density-sensitive; use with care) |
 
 A/B a single generation with `python -m astel_gpu.generative --image IMG --no-clean`
 vs. without, to see the cleaned-vs-raw asset side by side.

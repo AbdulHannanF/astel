@@ -427,6 +427,16 @@
   position: absolute;
   inset: 0;
   min-height: 60vh;
+  /* Same as the gallery viewer: give the embedded .viewport-wrap a height to
+     fill, else its absolutely-positioned canvas collapses and the hero splat
+     never renders. */
+  display: flex;
+}
+
+.home-hero__viewport > .viewport-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .home-hero__overlay {
@@ -2136,6 +2146,16 @@
   overflow: hidden;
   position: sticky;
   top: calc(56px + var(--space-md)); /* clear the sticky site-header */
+  /* Flex so the embedded <Viewport> (.viewport-wrap) has a height to fill.
+     Without this the wrap — whose canvas and HUD are absolutely positioned —
+     collapses to 0px and the panel renders as a blank black box. */
+  display: flex;
+}
+
+.gallery-asset-viewer > .viewport-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 @media (max-width: 960px) {
