@@ -161,8 +161,15 @@ try {
   }
   Write-Host 'Press Ctrl+C to stop.' -ForegroundColor Green
 
+  # The child services (uvicorn, Vite) log to STDERR by design. Under
+  # ErrorActionPreference='Stop' (set above for the setup phase), Receive-Job
+  # re-raises that stderr as a terminating NativeCommandError and kills this
+  # supervisor -- which then tears the whole stack down on the first log line.
+  # Relax the preference and merge every stream to stdout for the log pump so
+  # normal child logging can never abort the run.
+  $ErrorActionPreference = 'Continue'
   while ($true) {
-    Receive-Job -Job $jobs | ForEach-Object { $_ }
+    Receive-Job -Job $jobs -ErrorAction SilentlyContinue *>&1 | ForEach-Object { "$_" }
     if ($jobs | Where-Object { $_.State -ne 'Running' }) {
       Write-Warning 'A service exited; check logs above.'
       break

@@ -79,6 +79,36 @@ runs in the background. To drive this box's GPUs from a laptop, run
 [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md). Full path walkthrough:
 [docs/MVP_TESTING.md](docs/MVP_TESTING.md).
 
+## Splat cleanup (floater removal)
+
+Feed-forward generators (TripoSplat L2) spray a minority of junk splats around the
+real object — faint dark "smoke", oversized translucent halo blobs, elongated
+"needle" streaks, and disconnected floater clusters. Because the L3 distillation
+freezes positions and learns to *reproduce* the L2 appearance, it would otherwise
+bake those floaters into the final asset. The generative path therefore runs a
+scale-invariant cleanup (`pipelines/gpu/.../splat_clean.py`) on the L2 cloud
+**before** distillation (so the distillation targets — and the framing
+normalization — are clean) plus a cheap final pass on L3. Filters: opacity floor,
+elongation cap (needles; leaves flat surfels alone), oversize cap (halo blobs),
+and statistical outlier removal (disconnected floaters, KD-tree). Every stage's
+removal count is logged into the run metrics (`l2_clean` / `l3_clean`) — nothing is
+dropped silently.
+
+Cleanup is **on by default**. Tune per run via env vars (no code change):
+
+| Env var | Default | Effect |
+|---|---|---|
+| `ASTEL_CLEAN` | `1` | `0`/`off` disables all cleanup |
+| `ASTEL_CLEAN_OPACITY_MIN` | `0.06` | drop splats fainter than this (raise to cut more smoke) |
+| `ASTEL_CLEAN_MAX_ELONGATION` | `12` | drop needles above this `s_max/s_mid` (lower = stricter) |
+| `ASTEL_CLEAN_MAX_SCALE_FACTOR` | `10` | drop blobs larger than `factor × median` extent |
+| `ASTEL_CLEAN_SOR_NEIGHBORS` | `16` | k for statistical outlier removal |
+| `ASTEL_CLEAN_SOR_STD_RATIO` | `2.0` | outlier threshold = `mean + ratio × std` (lower = stricter) |
+| `ASTEL_CLEAN_SOR_ITERS` | `2` | SOR passes |
+
+A/B a single generation with `python -m astel_gpu.generative --image IMG --no-clean`
+vs. without, to see the cleaned-vs-raw asset side by side.
+
 ## Running the gates
 
 CI (`.github/workflows/ci.yml`) runs these gates on every push/PR — covering all 9

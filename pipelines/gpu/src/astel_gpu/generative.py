@@ -42,6 +42,7 @@ from .gaussians import GaussianParams
 from .l2_triposplat import run_l2
 from .l3_refine import DEFAULT_LAMBDA_NORMAL, optimize_2dgs, render_2dgs_colors
 from .smoke_refit import RenderInputs, render_views
+from .splat_clean import CleanConfig, clean_gaussians
 
 DEFAULT_N_VIEWS = 24
 #: Distillation supervision resolution. Raised 256 -> 512: at 256px a 262k-splat
@@ -179,9 +180,10 @@ def run_l2_to_l3(
     lambda_normal: float = DEFAULT_LAMBDA_NORMAL,
     lambda_dist: float = 0.0,
     means_lr_scale: float = DEFAULT_MEANS_LR_SCALE,
+    clean_config: CleanConfig | None = None,
     device_str: str | None = None,
 ) -> L2L3Result:
-    """image -> TripoSplat L2 -> normalise -> render orbit -> 2DGS L3 distillation."""
+    """image -> TripoSplat L2 -> clean -> normalise -> orbit -> 2DGS L3 distillation."""
     device_str = device_str or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_str)
     if device.type == "cuda":
@@ -193,7 +195,16 @@ def run_l2_to_l3(
         device=device_str,
     )
     l2_params_native = gaussian_params_from_splat_cloud(l2.cloud, device)
-    l2_params, _center, radius = normalize_params(l2_params_native)
+
+    # Floater removal BEFORE normalise/distillation. TripoSplat sprays low-opacity
+    # smoke, oversized halo blobs, needle streaks, and disconnected floaters; the
+    # frozen-position L3 distillation would otherwise bake them in (it only learns
+    # to reproduce the L2 appearance). Cleaning here also fixes framing: a far
+    # floater no longer dominates ``normalize_params``'s radius. See
+    # :mod:`astel_gpu.splat_clean`.
+    clean_config = clean_config if clean_config is not None else CleanConfig.from_env()
+    l2_params_clean, l2_clean_stats = clean_gaussians(l2_params_native, clean_config)
+    l2_params, _center, radius = normalize_params(l2_params_clean)
 
     # Orbit rig (unit-sphere); split into train/held-out for an honest PSNR.
     viewmats, ks = build_camera_rig(n_views, image_size)
@@ -230,6 +241,13 @@ def run_l2_to_l3(
         torch.cuda.synchronize()
     refine_time_s = time.perf_counter() - start
 
+    # Cheap final pass: distillation can drive a few surfels to near-zero opacity
+    # or extreme in-plane elongation. ``spatial=False`` skips SOR (positions are
+    # unchanged from the already-outlier-removed L2 input, so it would be wasted).
+    l3_params, l3_clean_stats = clean_gaussians(
+        l3_params, clean_config, spatial=False
+    )
+
     with torch.no_grad():
         test_psnr_db = psnr(render_2dgs_colors(l3_params, test_inputs), test_targets)
 
@@ -242,7 +260,10 @@ def run_l2_to_l3(
         "stage": "l2->l3",
         "l2_metrics": l2.metrics,
         "l2_gaussians": l2.cloud.count,
+        "l2_gaussians_cleaned": l2_params.count,
         "l3_gaussians": l3_params.count,
+        "l2_clean": l2_clean_stats,
+        "l3_clean": l3_clean_stats,
         "normalize_radius": radius,
         "selfconsistency_test_psnr_db": test_psnr_db,
         "n_views": n_views,
@@ -283,9 +304,20 @@ def main() -> None:
     parser.add_argument(
         "--means-lr-scale", type=float, default=DEFAULT_MEANS_LR_SCALE
     )
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help=(
+            "Disable floater/needle/blob removal (A/B against the cleaned asset). "
+            "Cleaning is ON by default; tune thresholds via ASTEL_CLEAN* env vars."
+        ),
+    )
     parser.add_argument("--out", type=Path, default=Path("out_generative"))
     args = parser.parse_args()
 
+    from dataclasses import replace
+
+    clean_config = replace(CleanConfig.from_env(), enabled=not args.no_clean)
     result = run_l2_to_l3(
         args.image,
         num_gaussians=args.num_gaussians,
@@ -297,6 +329,7 @@ def main() -> None:
         lambda_normal=args.lambda_normal,
         lambda_dist=args.lambda_dist,
         means_lr_scale=args.means_lr_scale,
+        clean_config=clean_config,
     )
 
     args.out.mkdir(parents=True, exist_ok=True)
