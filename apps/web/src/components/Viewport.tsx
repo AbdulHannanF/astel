@@ -8,6 +8,13 @@ interface ViewportProps {
   splatUrl?: string;
   /** Falls back to this URL (the static sample) if {@link splatUrl} fails. */
   fallbackUrl?: string;
+  /**
+   * True when the URL being shown is the bundled demo sample rather than a
+   * real generated asset (i.e. the Studio is idle / no generation yet). Drives
+   * an explicit "demo sample" badge so the placeholder torus is never mistaken
+   * for the user's own result (CLAUDE.md §10.4: no silent substitution).
+   */
+  isSample?: boolean;
   splatVisible: boolean;
 }
 
@@ -20,11 +27,15 @@ export function Viewport({
   sampleUrl,
   splatUrl,
   fallbackUrl,
+  isSample = false,
   splatVisible,
 }: ViewportProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SplatScene | null>(null);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
+  // True once a real asset failed and we silently swapped in the static sample.
+  // Reset whenever the requested target changes (a fresh load attempt).
+  const [fellBackToSample, setFellBackToSample] = useState(false);
 
   const url = splatUrl ?? sampleUrl;
 
@@ -51,19 +62,27 @@ export function Viewport({
     if (!scene) return;
 
     Promise.resolve()
-      .then(() => setState({ kind: "loading" }))
+      .then(() => {
+        setFellBackToSample(false);
+        setState({ kind: "loading" });
+      })
       .then(() => scene.load(url));
   }, [url]);
 
   // If loading the per-task artifact fails, fall back to the static sample
-  // so a bad/missing artifact never leaves the viewer stuck on an error.
+  // so a bad/missing artifact never leaves the viewer stuck on an error. The
+  // swap is flagged (fellBackToSample) so the HUD can say so out loud rather
+  // than pass the demo torus off as the user's asset.
   useEffect(() => {
     const scene = sceneRef.current;
     const fallback = fallbackUrl ?? sampleUrl;
     if (!scene || state.kind !== "error" || url === fallback) return;
 
     Promise.resolve()
-      .then(() => setState({ kind: "loading" }))
+      .then(() => {
+        setFellBackToSample(true);
+        setState({ kind: "loading" });
+      })
       .then(() => scene.load(fallback));
   }, [state.kind, url, fallbackUrl, sampleUrl]);
 
@@ -80,12 +99,35 @@ export function Viewport({
 
       <div className="viewport-hud">
         <div className="hud-row">
-          <span className="hud-chip">
-            <span className="swatch" />
-            <span>
-              Layer <b>L3</b> · Refined surface
+          <div className="hud-left">
+            <span className="hud-chip">
+              <span className="swatch" />
+              <span>
+                Layer <b>L3</b> · Refined surface
+              </span>
             </span>
-          </span>
+            {fellBackToSample ? (
+              <span
+                className="hud-chip hud-chip--warn"
+                title="The generated asset couldn't be loaded; the bundled demo sample is shown instead."
+              >
+                <span className="swatch" />
+                <span>
+                  Load failed — <b>demo</b>
+                </span>
+              </span>
+            ) : isSample ? (
+              <span
+                className="hud-chip hud-chip--demo"
+                title="This is the bundled demo sample, not a generated asset. Enter a prompt and Generate to create your own."
+              >
+                <span className="swatch" />
+                <span>
+                  <b>Demo sample</b>
+                </span>
+              </span>
+            ) : null}
+          </div>
           <div className="viewport-actions">
             <button
               type="button"

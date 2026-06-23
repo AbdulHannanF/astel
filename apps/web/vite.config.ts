@@ -9,6 +9,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Remote access (laptop -> this box) reaches the dev server by hostname, not
+    // just IP — e.g. a Tailscale MagicDNS name. Vite blocks non-IP Hosts not in
+    // allowedHosts with a 403 ("Blocked request. This host is not allowed."),
+    // which surfaced as "Failed to create generation (403)". On a trusted
+    // private LAN / Tailscale dev box, allow any host. See docs/REMOTE_ACCESS.md.
+    allowedHosts: true,
     proxy: {
       "/v1": { target: API_TARGET, changeOrigin: true },
       "/healthz": { target: API_TARGET, changeOrigin: true },

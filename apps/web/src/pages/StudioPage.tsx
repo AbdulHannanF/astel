@@ -128,6 +128,7 @@ export function StudioPage(): React.JSX.Element {
               sampleUrl={SAMPLE_URL}
               splatUrl={splatUrl}
               fallbackUrl={SAMPLE_URL}
+              isSample={!(succeeded && taskId)}
               splatVisible={splatVisible}
             />
           )}

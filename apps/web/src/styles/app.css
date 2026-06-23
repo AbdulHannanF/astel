@@ -194,6 +194,36 @@
   background: var(--accent);
 }
 
+/* Group the left-hand HUD chips (layer label + demo/fallback badge). */
+.hud-left {
+  pointer-events: none;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* "Demo sample" badge: the idle viewport is showing the bundled placeholder,
+   not a generated asset. Amber, so it reads as informational, not an error. */
+.hud-chip--demo {
+  border-color: oklch(78% 0.13 75 / 0.55);
+  background: oklch(30% 0.07 75 / 0.42);
+  color: var(--text-hi);
+}
+.hud-chip--demo .swatch {
+  background: oklch(80% 0.14 75);
+}
+
+/* "Asset failed to load — showing demo" badge: an honest fallback notice. */
+.hud-chip--warn {
+  border-color: var(--danger-soft);
+  background: oklch(30% 0.09 25 / 0.42);
+  color: var(--text-hi);
+}
+.hud-chip--warn .swatch {
+  background: var(--danger);
+}
+
 .viewport-actions {
   pointer-events: auto;
   display: inline-flex;
