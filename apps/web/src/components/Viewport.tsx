@@ -33,9 +33,13 @@ export function Viewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SplatScene | null>(null);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  // True once a real asset failed and we silently swapped in the static sample.
-  // Reset whenever the requested target changes (a fresh load attempt).
-  const [fellBackToSample, setFellBackToSample] = useState(false);
+  // Non-null once a real asset failed to load and we swapped in the static
+  // sample: holds the underlying error so the HUD/console can say *why* rather
+  // than passing the demo torus off as the user's asset. Reset on each fresh
+  // target. (This is the path remote laptops hit when the box generates fine
+  // but the generated splat can't be fetched/rendered client-side.)
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
+  const fellBackToSample = fallbackError !== null;
 
   const url = splatUrl ?? sampleUrl;
 
@@ -63,7 +67,7 @@ export function Viewport({
 
     Promise.resolve()
       .then(() => {
-        setFellBackToSample(false);
+        setFallbackError(null);
         setState({ kind: "loading" });
       })
       .then(() => scene.load(url));
@@ -78,13 +82,21 @@ export function Viewport({
     const fallback = fallbackUrl ?? sampleUrl;
     if (!scene || state.kind !== "error" || url === fallback) return;
 
+    const reason = state.message;
+    // Surface the real failure to the console so a remote/laptop client can be
+    // diagnosed (the on-screen result is the demo sample; without this the true
+    // error is invisible).
+    console.warn(
+      `[Astel] Couldn't load the generated splat (${url}); showing the demo ` +
+        `sample instead. Reason: ${reason}`,
+    );
     Promise.resolve()
       .then(() => {
-        setFellBackToSample(true);
+        setFallbackError(reason);
         setState({ kind: "loading" });
       })
       .then(() => scene.load(fallback));
-  }, [state.kind, url, fallbackUrl, sampleUrl]);
+  }, [state, url, fallbackUrl, sampleUrl]);
 
   // Reflect L3 visibility toggle from the Layer Inspector into the scene.
   useEffect(() => {
@@ -109,7 +121,7 @@ export function Viewport({
             {fellBackToSample ? (
               <span
                 className="hud-chip hud-chip--warn"
-                title="The generated asset couldn't be loaded; the bundled demo sample is shown instead."
+                title={`The generated asset couldn't be loaded in this browser; the bundled demo sample is shown instead. Reason: ${fallbackError ?? "unknown"}`}
               >
                 <span className="swatch" />
                 <span>

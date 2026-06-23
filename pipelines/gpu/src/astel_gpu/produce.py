@@ -353,17 +353,23 @@ def _build_multiview_report(
     n_views: int,
     psnr_db: float,
     geometry_qa: dict[str, Any] | None,
+    source: str = "text",
 ) -> dict[str, Any]:
-    """``astel.quality-report/v0`` for a text→multi-view-reconstruction asset.
+    """``astel.quality-report/v0`` for a multi-view-reconstruction asset.
 
-    Honest provenance: origin ``generated`` (the views are diffusion-synthesised,
+    ``source`` is the conditioning modality — ``"text"`` (MV-Adapter t2mv from a
+    prompt) or ``"image"`` (MV-Adapter i2mv from a reference image). Honest
+    provenance either way: origin ``generated`` (the views are diffusion-synthesised,
     not photographed), no ground-truth geometry/scale, but multi-view-CONSISTENT
     conditioning (real back/sides, unlike the single-image distillation path).
     """
+    adapter = "i2mv" if source == "image" else "t2mv"
     report: dict[str, Any] = {
         "schema": "astel.quality-report/v0",
         "origin": "generated",
-        "modality": "generative-text/mv-adapter-multiview->3dgs-reconstruction",
+        "modality": (
+            f"generative-{source}/mv-adapter-{adapter}-multiview->3dgs-reconstruction"
+        ),
         "representation": "3dgs",
         "splats": count,
         "geometric_error": {
@@ -398,11 +404,17 @@ def _build_multiview_report(
         },
         "provenance": {"measured_ratio": 0.0, "generated_ratio": 1.0},
         "caveats": [
-            f"Fully GENERATED asset: text → MV-Adapter {n_views} consistent views → "
-            "3DGS multi-view reconstruction. Nothing is measured against reality.",
+            f"Fully GENERATED asset: {source} → MV-Adapter {adapter} {n_views} "
+            "consistent views → 3DGS multi-view reconstruction. Nothing is measured "
+            "against reality.",
             "Multi-view-consistent conditioning gives a real back/sides + per-view "
             "detail (unlike the single-image path), but the views are "
-            "diffusion-synthesised, not photographed.",
+            "diffusion-synthesised, not photographed."
+            + (
+                " The i2mv views stay faithful to the input image's identity."
+                if source == "image"
+                else ""
+            ),
             "geometric_error and scale are explicitly None (not fabricated): no "
             "ground-truth geometry or metric scale exists for a generated object.",
         ],
@@ -488,6 +500,165 @@ def _produce_text_multiview(
         **recon_metrics, "fit_psnr_db": fit_psnr, "source": "mv-adapter",
         "n_views": spec.num_views, "source_res": res,
         "mv_wall_time_s": mv.wall_time_s,
+    }
+    (out_dir / "mv-recon-metrics.json").write_text(json.dumps(metrics, indent=2))
+    artifacts = sorted([*artifacts, "mv-recon-metrics.json", *view_names])
+    return {
+        "splats": l3_cloud.count,
+        "seed_splats": max(1, l3_cloud.count // 24),
+        "artifacts": artifacts,
+        "metrics": metrics,
+    }
+
+
+#: Hero-grade i2mv reconstruction recipe (env-overridable). Multiple elevation rings
+#: (the validated full_model.py recipe) + a high source resolution are what remove the
+#: wispy translucent streaks a single low-res ring leaves; the densified reconstruct
+#: grows real detail and a GENTLE opacity/elongation clean trims residual floaters
+#: without the connected-components over-prune (which eats a from-scratch fit).
+DEFAULT_I2MV_RES = 1024
+DEFAULT_I2MV_VIEWS = 6  # azimuths per ring
+DEFAULT_I2MV_ELEVATIONS: tuple[float, ...] = (0.0, 30.0)
+DEFAULT_I2MV_INIT = 150_000
+DEFAULT_I2MV_ITERS = 3000
+DEFAULT_I2MV_STOP = 2500
+DEFAULT_I2MV_MAX_SPLATS = 2_000_000
+
+
+def _i2mv_elevations() -> tuple[float, ...]:
+    """Elevation rings for the i2mv recipe (``ASTEL_I2MV_ELEVATIONS`` CSV or default)."""
+    raw = os.environ.get("ASTEL_I2MV_ELEVATIONS", "").strip()
+    if not raw:
+        return DEFAULT_I2MV_ELEVATIONS
+    try:
+        return tuple(float(x) for x in raw.split(","))
+    except ValueError:
+        return DEFAULT_I2MV_ELEVATIONS
+
+
+def _produce_image_multiview(
+    task_id: str,
+    modality: str,
+    prompt: str,
+    image: Path,
+    out_dir: Path,
+    *,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
+) -> dict[str, Any]:
+    """Image → MV-Adapter i2mv multi-view → 3DGS reconstruction → full layer stack.
+
+    The DEFAULT image path (the image-modality twin of :func:`_produce_text_multiview`)
+    and the fix for the single-image distillation's hallucinated "glassy" back: i2mv
+    synthesises view-consistent images FAITHFUL to the input reference across several
+    elevation rings, so the back/sides/crown are real and every side supervises the
+    densified from-scratch reconstruction (:mod:`astel_gpu.mv_reconstruct`). Recipe is
+    env-overridable (``ASTEL_I2MV_RES`` / ``ASTEL_I2MV_VIEWS`` /
+    ``ASTEL_I2MV_ELEVATIONS`` / ``ASTEL_I2MV_MAX_SPLATS``); set ``ASTEL_I2MV=0`` to fall
+    back to the cheap single-image distillation preview (:func:`_produce_generative`).
+    """
+    import torch  # noqa: PLC0415 (gsplat/diffusion-heavy path)
+
+    from .densify import DensifyConfig  # noqa: PLC0415
+    from .export import psnr  # noqa: PLC0415
+    from .generative import normalize_params  # noqa: PLC0415
+    from .geometry_qa import score_cloud  # noqa: PLC0415
+    from .image_to_multiview import generate_multiview_from_image  # noqa: PLC0415
+    from .mv_reconstruct import (  # noqa: PLC0415
+        matte_views,
+        ortho_cameras,
+        reconstruct,
+        render_ortho,
+    )
+    from .splat_clean import CleanConfig, clean_gaussians  # noqa: PLC0415
+    from .text_to_multiview import MultiViewSpec, default_spec  # noqa: PLC0415
+
+    seed = stable_seed(task_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _stage_l6_json(l6_json_path, out_dir)
+    res = int(os.environ.get("ASTEL_I2MV_RES", str(DEFAULT_I2MV_RES)))
+    n_views = int(os.environ.get("ASTEL_I2MV_VIEWS", str(DEFAULT_I2MV_VIEWS)))
+    elevations = _i2mv_elevations()
+    azimuths = default_spec(n_views).azimuth_deg
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    dev = torch.device(device_str)
+
+    # One MV-Adapter i2mv ring per elevation (the validated full_model.py recipe):
+    # the extra ring constrains the crown/underside and removes view-inconsistent wisps.
+    ring_targets: list[torch.Tensor] = []
+    ring_masks: list[torch.Tensor] = []
+    ring_vm: list[torch.Tensor] = []
+    ring_ks: list[torch.Tensor] = []
+    view_names: list[str] = []
+    mv_wall = 0.0
+    for elev in elevations:
+        spec = MultiViewSpec(azimuths, elevation_deg=elev)
+        mv = generate_multiview_from_image(
+            image, prompt=prompt or "high quality", spec=spec,
+            height=res, width=res, seed=seed, device=device_str,
+        )
+        mv_wall += mv.wall_time_s
+        for i, az in enumerate(azimuths):
+            name = f"image-multiview-el{int(elev):+03d}-az{az:03d}.png"
+            mv.images[i].save(out_dir / name)
+            view_names.append(name)
+        t, m = matte_views(mv.images, device=dev)
+        vm, ks_ = ortho_cameras(azimuths, elev, res, device=dev)
+        ring_targets.append(t)
+        ring_masks.append(m)
+        ring_vm.append(vm)
+        ring_ks.append(ks_)
+
+    targets = torch.cat(ring_targets, 0)
+    masks = torch.cat(ring_masks, 0)
+    viewmats = torch.cat(ring_vm, 0)
+    ks = torch.cat(ring_ks, 0)
+
+    dcfg = DensifyConfig(
+        grad_threshold=3.5e-5,
+        percent_dense=0.01,
+        max_gaussians=int(
+            os.environ.get("ASTEL_I2MV_MAX_SPLATS", str(DEFAULT_I2MV_MAX_SPLATS))
+        ),
+    )
+    cloud, recon_metrics = reconstruct(
+        targets, masks, viewmats, ks, res, seed=seed,
+        init_count=DEFAULT_I2MV_INIT, iters=DEFAULT_I2MV_ITERS, stop=DEFAULT_I2MV_STOP,
+        densify_config=dcfg,
+    )
+    # GENTLE clean only (opacity/elongation/oversize; ``spatial=False`` skips the
+    # connected-components pass, which over-prunes a from-scratch multi-view fit —
+    # measured ~50% loss — unlike the dense single-image L2 it was tuned for).
+    raw_count = cloud.count
+    cloud, clean_stats = clean_gaussians(cloud, CleanConfig.from_env(), spatial=False)
+    with torch.no_grad():
+        fit_psnr = psnr(render_ortho(cloud, viewmats, ks, res)[0], targets)
+    geometry_qa = score_cloud(cloud).to_dict()
+
+    cloud_n, _center, _radius = normalize_params(cloud)
+    l3_cloud = to_splat_cloud(cloud_n)
+    n_total_views = len(elevations) * len(azimuths)
+    report = _build_multiview_report(
+        count=l3_cloud.count, n_views=n_total_views, psnr_db=fit_psnr,
+        geometry_qa=geometry_qa, source="image",
+    )
+    package_report = build_package_quality_report(
+        modality=modality,
+        origin_note=(
+            "Generated: image → MV-Adapter i2mv multi-view diffusion → 3DGS multi-view "
+            "reconstruction. View-consistent + faithful to the input image, but "
+            "synthetic; nothing measured."
+        ),
+    )
+    artifacts = write_layer_stack(
+        l3_cloud, out_dir, task_id=task_id, modality=modality, prompt=prompt,
+        seed=seed, report_dict=report, package_report=package_report,
+        longest_axis_m=longest_axis_m,
+    )
+    metrics = {
+        **recon_metrics, "fit_psnr_db": fit_psnr, "source": "mv-adapter-i2mv",
+        "n_views": n_total_views, "elevations": list(elevations), "source_res": res,
+        "raw_splats": raw_count, "clean": clean_stats, "mv_wall_time_s": mv_wall,
     }
     (out_dir / "mv-recon-metrics.json").write_text(json.dumps(metrics, indent=2))
     artifacts = sorted([*artifacts, "mv-recon-metrics.json", *view_names])
@@ -626,6 +797,24 @@ def produce(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     if modality == "image" and image is not None and image.is_file():
+        # Multi-view i2mv is the DEFAULT image path (image → MV-Adapter i2mv
+        # consistent views → densified 3DGS recon): real back/sides faithful to the
+        # input, fixing the single-image distillation's hallucinated glassy back
+        # (validated 2026-06-24). The cheap single-image distillation
+        # (:func:`_produce_generative`) remains a fast-preview fallback via
+        # ``ASTEL_I2MV=0`` (or false/no/off).
+        if os.environ.get("ASTEL_I2MV", "1").strip().lower() not in {
+            "0", "false", "no", "off",
+        }:
+            return _produce_image_multiview(
+                task_id,
+                modality,
+                prompt,
+                image,
+                out_dir,
+                longest_axis_m=longest_axis_m,
+                l6_json_path=l6_json_path,
+            )
         return _produce_generative(
             task_id,
             modality,
