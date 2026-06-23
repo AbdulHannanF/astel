@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ from .export import (
     write_gaussian_ply,
 )
 from .gaussians import GaussianParams
+from .geometry_qa import GeometryScore, score_cloud
 from .l2_triposplat import run_l2
 from .l3_refine import DEFAULT_LAMBDA_NORMAL, optimize_2dgs, render_2dgs_colors
 from .smoke_refit import RenderInputs, render_views
@@ -64,6 +66,53 @@ DEFAULT_REFINE_ITERS = 600
 #: :func:`astel_gpu.l3_refine.optimize_2dgs`.
 DEFAULT_MEANS_LR_SCALE = 0.0
 DEFAULT_HOLDOUT_EVERY = 6
+#: Env switch (``ASTEL_L3_REFINE``) selecting the Tier-1 densified refine
+#: (:func:`astel_gpu.refine.refine_with_densification` — unfrozen positions +
+#: adaptive density control + perceptual loss) over the default frozen
+#: distillation. Off by default: the densified path needs a Box A GPU run to
+#: validate and tune before it becomes the default.
+_DENSIFY_ENV = "ASTEL_L3_REFINE"
+#: Env switch (``ASTEL_L3_MV_ENHANCE``) turning on the SDXL multi-view target
+#: enhancer (:mod:`astel_gpu.mv_enhance`): the L2 orbit renders are img2img-enhanced
+#: into higher-detail supervision and the densified refine chases them. This is the
+#: verified Tier-1 unlock — the refine only exceeds L2 with such external targets.
+#: Implies the densified refine. Off by default (extra SDXL pass + needs tuning).
+_MV_ENHANCE_ENV = "ASTEL_L3_MV_ENHANCE"
+#: Env override (``ASTEL_L3_MV_STRENGTH``) for the img2img SDEdit strength. Low keeps
+#: views anchored to geometry (consistent); high lets each view invent incompatible
+#: detail and the refine averages to mush.
+_MV_STRENGTH_ENV = "ASTEL_L3_MV_STRENGTH"
+DEFAULT_MV_STRENGTH = 0.3
+
+
+def _resolve_flag(flag: bool | None, env_name: str) -> bool:
+    """Resolve a boolean switch (explicit arg, else env truthiness, else off)."""
+    if flag is not None:
+        return flag
+    return os.environ.get(env_name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_densify(flag: bool | None) -> bool:
+    """Resolve the densified-refine switch (explicit arg, else env, else off)."""
+    return _resolve_flag(flag, _DENSIFY_ENV)
+
+
+def _resolve_mv_enhance(flag: bool | None) -> bool:
+    """Resolve the multi-view-enhance switch (explicit arg, else env, else off)."""
+    return _resolve_flag(flag, _MV_ENHANCE_ENV)
+
+
+def _resolve_mv_strength(value: float | None) -> float:
+    """Resolve the img2img enhance strength (explicit arg, else env, else default)."""
+    if value is not None:
+        return value
+    raw = os.environ.get(_MV_STRENGTH_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MV_STRENGTH
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_MV_STRENGTH
 
 
 def normalize_params(
@@ -101,9 +150,23 @@ def build_generative_quality_report(
     psnr_db: float,
     n_holdout_views: int,
     image_path: str,
+    geometry_qa: dict[str, Any] | None = None,
+    image_qa: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """``astel.quality-report/v0`` for a generated, surfelised L3 asset."""
-    return {
+    """``astel.quality-report/v0`` for a generated, surfelised L3 asset.
+
+    ``geometry_qa`` (the degenerate-asset scorecard) and ``image_qa`` (the chosen
+    reference image's scorecard, text/image paths only) are embedded under a
+    ``"qa"`` block when supplied, so the Truth Meter can show *why* a generated
+    asset was accepted (or flag a degenerate one) without claiming any measured
+    accuracy. Both are pure self-assessments of a generated asset.
+    """
+    qa: dict[str, Any] = {}
+    if geometry_qa is not None:
+        qa["geometry"] = geometry_qa
+    if image_qa is not None:
+        qa["image"] = image_qa
+    report = {
         "schema": "astel.quality-report/v0",
         # Honesty contract (CLAUDE.md §1.3/§8.4): this asset is distilled from the
         # TripoSplat L2 generator, NOT reconstructed from real capture, so its
@@ -157,6 +220,9 @@ def build_generative_quality_report(
             "geometry and no metric scale exist for a generated object.",
         ],
     }
+    if qa:
+        report["qa"] = qa
+    return report
 
 
 @dataclass
@@ -182,8 +248,29 @@ def run_l2_to_l3(
     means_lr_scale: float = DEFAULT_MEANS_LR_SCALE,
     clean_config: CleanConfig | None = None,
     device_str: str | None = None,
+    image_qa: dict[str, Any] | None = None,
+    densify: bool | None = None,
+    external_targets: torch.Tensor | None = None,
+    prompt: str = "",
+    mv_enhance: bool | None = None,
+    mv_strength: float | None = None,
 ) -> L2L3Result:
-    """image -> TripoSplat L2 -> clean -> normalise -> orbit -> 2DGS L3 distillation."""
+    """image -> TripoSplat L2 -> clean -> normalise -> orbit -> 2DGS L3.
+
+    Default L3 is the frozen distillation (positions fixed, fixed count, supervised
+    by the L2 generator's own renders). When ``densify`` is true (or
+    ``ASTEL_L3_REFINE`` is set) the Tier-1 densified refine runs instead
+    (:func:`astel_gpu.refine.refine_with_densification`: unfrozen positions +
+    adaptive density control + perceptual loss). ``external_targets`` — multi-view
+    images rendered on the SAME train rig by a stronger generator (TRELLIS.2 /
+    MVDream / SDS-enhanced views) — replaces the L2 self-renders as supervision and
+    is the path by which the refine exceeds L2; absent, the L2 self-renders are used
+    (a better-distillation bounded by L2).
+
+    ``image_qa`` (the chosen reference image's critic scorecard, supplied by the
+    text/image producer paths) is embedded into the quality report's ``qa`` block
+    alongside the geometry critic computed here.
+    """
     device_str = device_str or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_str)
     if device.type == "cuda":
@@ -221,22 +308,58 @@ def run_l2_to_l3(
         image_size=image_size,
     )
 
-    # Distillation targets = the L2 generator rendered as 3DGS.
+    # Supervision targets. Priority: caller-supplied external multi-view images
+    # (Tier-1, must match the train rig) > SDXL-enhanced L2 orbit renders
+    # (ASTEL_L3_MV_ENHANCE) > the L2 generator's own renders (distillation).
+    use_mv_enhance = _resolve_mv_enhance(mv_enhance) and external_targets is None
+    mv_metrics: dict[str, Any] | None = None
     with torch.no_grad():
-        train_targets = render_views(l2_params, train_inputs)
+        if external_targets is not None:
+            train_targets = external_targets
+        else:
+            base_train = render_views(l2_params, train_inputs)
+            if use_mv_enhance:
+                from .mv_enhance import enhance_views  # noqa: PLC0415 (SDXL-heavy)
+
+                train_targets, mv_metrics = enhance_views(
+                    base_train,
+                    prompt=prompt,
+                    strength=_resolve_mv_strength(mv_strength),
+                    seed=seed,
+                    device=device_str,
+                )
+            else:
+                train_targets = base_train
         test_targets = render_views(l2_params, test_inputs)
 
+    # MV-enhanced targets are only worth chasing with the densified refine (it can
+    # grow splats to match the injected detail); imply it.
+    use_densify = _resolve_densify(densify) or use_mv_enhance
+    refine_metrics: dict[str, Any] | None = None
     start = time.perf_counter()
-    l3_params, _init_psnr = optimize_2dgs(
-        l2_params,
-        train_targets,
-        train_inputs,
-        iters=refine_iters,
-        spatial_lr_scale=1.0,
-        lambda_normal=lambda_normal,
-        lambda_dist=lambda_dist,
-        means_lr_scale=means_lr_scale,
-    )
+    if use_densify:
+        from .refine import refine_with_densification  # noqa: PLC0415 (gsplat-heavy)
+
+        l3_params, refine_metrics = refine_with_densification(
+            l2_params,
+            train_targets,
+            train_inputs,
+            iters=refine_iters,
+            spatial_lr_scale=1.0,
+            lambda_normal=lambda_normal,
+            lambda_dist=lambda_dist,
+        )
+    else:
+        l3_params, _init_psnr = optimize_2dgs(
+            l2_params,
+            train_targets,
+            train_inputs,
+            iters=refine_iters,
+            spatial_lr_scale=1.0,
+            lambda_normal=lambda_normal,
+            lambda_dist=lambda_dist,
+            means_lr_scale=means_lr_scale,
+        )
     if device.type == "cuda":
         torch.cuda.synchronize()
     refine_time_s = time.perf_counter() - start
@@ -253,6 +376,14 @@ def run_l2_to_l3(
 
     peak_vram_gb = (
         torch.cuda.max_memory_allocated(device) / 1e9 if device.type == "cuda" else 0.0
+    )
+
+    # Degenerate-asset critic over the produced cloud (cheap stats; no render).
+    # Feeds the Truth Meter and the producer's optional best-of-K asset re-roll.
+    geom_score: GeometryScore = score_cloud(
+        l3_params,
+        clean_removed_fraction=l2_clean_stats.get("removed_fraction"),
+        selfconsistency_psnr_db=test_psnr_db,
     )
 
     metrics: dict[str, Any] = {
@@ -277,6 +408,12 @@ def run_l2_to_l3(
         "refine_wall_time_s": refine_time_s,
         "peak_vram_gb": peak_vram_gb,
         "image_used": str(image_path),
+        "geometry_qa": geom_score.to_dict(),
+        "densify": use_densify,
+        "external_targets": external_targets is not None,
+        "mv_enhance": use_mv_enhance,
+        "mv_enhance_metrics": mv_metrics,
+        "refine_metrics": refine_metrics,
     }
     report = build_generative_quality_report(
         count=l3_params.count,
@@ -284,6 +421,8 @@ def run_l2_to_l3(
         psnr_db=test_psnr_db,
         n_holdout_views=len(test_idx),
         image_path=str(image_path),
+        geometry_qa=geom_score.to_dict(),
+        image_qa=image_qa,
     )
     return L2L3Result(
         l2_params=l2_params, l3_params=l3_params, metrics=metrics, report=report

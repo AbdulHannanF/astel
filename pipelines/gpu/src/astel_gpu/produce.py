@@ -35,11 +35,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from .export import to_splat_cloud
-from .generative import DEFAULT_REFINE_ITERS, run_l2_to_l3
+from .generative import DEFAULT_REFINE_ITERS, L2L3Result, run_l2_to_l3
 from .packaging import build_package_quality_report, write_layer_stack
 from .smoke_refit import (
     DEFAULT_IMAGE_SIZE,
@@ -47,7 +48,67 @@ from .smoke_refit import (
     DEFAULT_N_VIEWS,
     run_smoke,
 )
-from .text_to_image import build_flux_prompt, generate_image
+from .text_to_image import build_flux_prompt, generate_image_best_of_n
+
+#: Optional best-of-K asset re-roll: run the L2->L3 stage K times with different
+#: TripoSplat noise seeds and keep the soundest cloud (by the geometry critic),
+#: stopping early once one passes. ``1`` (default) disables it — each extra roll
+#: costs a full TripoSplat pass, so this is an opt-in quality/cost trade for the
+#: cases where a single draw collapses. Override via ``ASTEL_ASSET_BEST_OF``.
+DEFAULT_ASSET_BEST_OF = 1
+_ASSET_BEST_OF_ENV = "ASTEL_ASSET_BEST_OF"
+
+
+def active_asset_best_of(default: int = DEFAULT_ASSET_BEST_OF) -> int:
+    """Asset best-of-K count in effect (``ASTEL_ASSET_BEST_OF`` env or default)."""
+    raw = os.environ.get(_ASSET_BEST_OF_ENV)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _run_l2l3_best_of_k(
+    image: Path,
+    *,
+    base_seed: int,
+    k: int,
+    refine_iters: int,
+    image_qa: dict[str, Any] | None,
+    prompt: str = "",
+) -> L2L3Result:
+    """Run L2->L3 up to ``k`` times (seeds ``base_seed + i``); keep the soundest.
+
+    Scores each result by its geometry critic (``metrics['geometry_qa']``), keeps
+    the highest ``overall``, and stops early the moment one is ``accept``. ``k==1``
+    is a single pass (no added cost). The kept result records the re-roll count
+    and which roll won under ``metrics['asset_reroll']``.
+    """
+    best: L2L3Result | None = None
+    best_overall = -1.0
+    rolls_run = 0
+    for i in range(max(1, k)):
+        rolls_run += 1
+        result = run_l2_to_l3(
+            image, seed=base_seed + i, refine_iters=refine_iters, image_qa=image_qa,
+            prompt=prompt,
+        )
+        qa = result.metrics.get("geometry_qa", {})
+        overall = float(qa.get("overall", 0.0))
+        if overall > best_overall:
+            best_overall, best = overall, result
+        if qa.get("accept", False):
+            break
+    assert best is not None  # the loop runs at least once
+    best.metrics["asset_reroll"] = {
+        "k": k,
+        "rolls_run": rolls_run,
+        "winning_overall": best_overall,
+        "base_seed": base_seed,
+    }
+    return best
 
 
 def stable_seed(task_id: str) -> int:
@@ -148,6 +209,7 @@ def _produce_from_image(
     extra_artifacts: list[str] | None = None,
     longest_axis_m: float | None = None,
     l6_json_path: Path | None = None,
+    image_qa: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Shared core: image → TripoSplat L2 → 2DGS L3 → full layer stack.
 
@@ -162,7 +224,14 @@ def _produce_from_image(
     seed = stable_seed(task_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     _stage_l6_json(l6_json_path, out_dir)
-    result = run_l2_to_l3(image, seed=seed, refine_iters=refine_iters)
+    result = _run_l2l3_best_of_k(
+        image,
+        base_seed=seed,
+        k=active_asset_best_of(),
+        refine_iters=refine_iters,
+        image_qa=image_qa,
+        prompt=prompt,
+    )
 
     l3_cloud = to_splat_cloud(result.l3_params)
     l2_cloud = to_splat_cloud(result.l2_params)
@@ -233,15 +302,27 @@ def _produce_text_generative(
     longest_axis_m: float | None = None,
     l6_json_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Text → SDXL/FLUX image → TripoSplat L2 → 2DGS L3 → full layer stack."""
+    """Text → SDXL/FLUX best-of-N image → TripoSplat L2 → 2DGS L3 → full stack.
+
+    Best-of-N (:func:`generate_image_best_of_n`) draws several candidate images and
+    keeps the one the reference-image critic ranks highest, which is the primary
+    fix for "same prompt, sometimes wrong": a bad text-to-image draw no longer
+    determines the whole asset. The chosen image's scorecard is threaded into the
+    quality report (Truth Meter) and every candidate's score is persisted.
+    """
     seed = stable_seed(task_id)
     flux_prompt = build_flux_prompt(prompt)
     image_path = out_dir / "text-reference.png"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    text2img_metrics = generate_image(flux_prompt, image_path, seed=seed)
+    best = generate_image_best_of_n(flux_prompt, image_path, base_seed=seed)
+    (out_dir / "text2img-candidates.json").write_text(
+        json.dumps(best.to_sidecar(), indent=2)
+    )
+    # Keep the legacy per-image metrics sidecar (the chosen draw) for consumers
+    # that already read it.
     (out_dir / "text2img-metrics.json").write_text(
-        json.dumps(text2img_metrics, indent=2)
+        json.dumps(best.chosen_metrics, indent=2)
     )
 
     return _produce_from_image(
@@ -253,12 +334,169 @@ def _produce_text_generative(
         refine_iters=refine_iters,
         longest_axis_m=longest_axis_m,
         l6_json_path=l6_json_path,
+        image_qa=best.chosen_score.to_dict(),
         origin_note=(
-            "Generated from text: prompt → SDXL/FLUX image → TripoSplat "
-            "L2 → 2DGS L3. Nothing measured against reality."
+            "Generated from text: prompt → SDXL/FLUX (best-of-N) image → "
+            "TripoSplat L2 → 2DGS L3. Nothing measured against reality."
         ),
-        extra_artifacts=["text-reference.png", "text2img-metrics.json"],
+        extra_artifacts=[
+            "text-reference.png",
+            "text2img-metrics.json",
+            "text2img-candidates.json",
+        ],
     )
+
+
+def _build_multiview_report(
+    *,
+    count: int,
+    n_views: int,
+    psnr_db: float,
+    geometry_qa: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """``astel.quality-report/v0`` for a text→multi-view-reconstruction asset.
+
+    Honest provenance: origin ``generated`` (the views are diffusion-synthesised,
+    not photographed), no ground-truth geometry/scale, but multi-view-CONSISTENT
+    conditioning (real back/sides, unlike the single-image distillation path).
+    """
+    report: dict[str, Any] = {
+        "schema": "astel.quality-report/v0",
+        "origin": "generated",
+        "modality": "generative-text/mv-adapter-multiview->3dgs-reconstruction",
+        "representation": "3dgs",
+        "splats": count,
+        "geometric_error": {
+            "chamfer_mm_vs_l1": None,
+            "method": None,
+            "reason": (
+                "Generated object reconstructed from MV-Adapter multi-view-diffusion "
+                "images (view-consistent but synthetic). There is no real-world "
+                "ground-truth scan to compare against, so geometric accuracy vs "
+                "reality is undefined here."
+            ),
+        },
+        "fidelity": {
+            "psnr_db": psnr_db,
+            "ssim": None,
+            "lpips": None,
+            "n_holdout_views": 0,
+            "psnr_note": (
+                "Photometric fit to the generated multi-view images (training "
+                "views) — how well the splat reproduces the diffusion views, NOT "
+                "accuracy versus any real object."
+            ),
+        },
+        "scale": {
+            "longest_axis_m": None,
+            "confidence": None,
+            "method": "estimate",
+            "reason": (
+                "Generated asset normalised to a unit frame; no metric-scale "
+                "grounding is performed here."
+            ),
+        },
+        "provenance": {"measured_ratio": 0.0, "generated_ratio": 1.0},
+        "caveats": [
+            f"Fully GENERATED asset: text → MV-Adapter {n_views} consistent views → "
+            "3DGS multi-view reconstruction. Nothing is measured against reality.",
+            "Multi-view-consistent conditioning gives a real back/sides + per-view "
+            "detail (unlike the single-image path), but the views are "
+            "diffusion-synthesised, not photographed.",
+            "geometric_error and scale are explicitly None (not fabricated): no "
+            "ground-truth geometry or metric scale exists for a generated object.",
+        ],
+    }
+    if geometry_qa is not None:
+        report["qa"] = {"geometry": geometry_qa}
+    return report
+
+
+def _produce_text_multiview(
+    task_id: str,
+    modality: str,
+    prompt: str,
+    out_dir: Path,
+    *,
+    longest_axis_m: float | None = None,
+    l6_json_path: Path | None = None,
+) -> dict[str, Any]:
+    """Text → MV-Adapter multi-view → 3DGS reconstruction → full layer stack.
+
+    Opt-in via ``ASTEL_T2MV=1`` (source res ``ASTEL_T2MV_RES``, view count
+    ``ASTEL_T2MV_VIEWS``). Unlike the default single-image path this conditions on
+    several view-consistent images, so the back/sides are real and the detail is
+    supervised from every side. See :mod:`astel_gpu.text_to_multiview` /
+    :mod:`astel_gpu.mv_reconstruct`.
+    """
+    import torch  # noqa: PLC0415 (gsplat/diffusion-heavy path)
+
+    from .export import psnr  # noqa: PLC0415
+    from .generative import normalize_params  # noqa: PLC0415
+    from .geometry_qa import score_cloud  # noqa: PLC0415
+    from .mv_reconstruct import (  # noqa: PLC0415
+        matte_views,
+        ortho_cameras,
+        reconstruct,
+        render_ortho,
+    )
+    from .text_to_multiview import default_spec, generate_multiview  # noqa: PLC0415
+
+    seed = stable_seed(task_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _stage_l6_json(l6_json_path, out_dir)
+    res = int(os.environ.get("ASTEL_T2MV_RES", "768"))
+    spec = default_spec(int(os.environ.get("ASTEL_T2MV_VIEWS", "6")))
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    mv = generate_multiview(
+        prompt, spec=spec, height=res, width=res, seed=seed, device=device_str
+    )
+    view_names: list[str] = []
+    for i, az in enumerate(spec.azimuth_deg):
+        name = f"text-multiview-{i:02d}-az{az:03d}.png"
+        mv.images[i].save(out_dir / name)
+        view_names.append(name)
+
+    dev = torch.device(device_str)
+    targets, masks = matte_views(mv.images, device=dev)
+    viewmats, ks = ortho_cameras(spec.azimuth_deg, spec.elevation_deg, res, device=dev)
+    cloud, recon_metrics = reconstruct(targets, masks, viewmats, ks, res, seed=seed)
+    with torch.no_grad():
+        fit_psnr = psnr(render_ortho(cloud, viewmats, ks, res)[0], targets)
+    geometry_qa = score_cloud(cloud).to_dict()
+
+    cloud_n, _center, _radius = normalize_params(cloud)
+    l3_cloud = to_splat_cloud(cloud_n)
+    report = _build_multiview_report(
+        count=l3_cloud.count, n_views=spec.num_views, psnr_db=fit_psnr,
+        geometry_qa=geometry_qa,
+    )
+    package_report = build_package_quality_report(
+        modality=modality,
+        origin_note=(
+            "Generated: text → MV-Adapter multi-view diffusion → 3DGS multi-view "
+            "reconstruction. View-consistent but synthetic; nothing measured."
+        ),
+    )
+    artifacts = write_layer_stack(
+        l3_cloud, out_dir, task_id=task_id, modality=modality, prompt=prompt,
+        seed=seed, report_dict=report, package_report=package_report,
+        longest_axis_m=longest_axis_m,
+    )
+    metrics = {
+        **recon_metrics, "fit_psnr_db": fit_psnr, "source": "mv-adapter",
+        "n_views": spec.num_views, "source_res": res,
+        "mv_wall_time_s": mv.wall_time_s,
+    }
+    (out_dir / "mv-recon-metrics.json").write_text(json.dumps(metrics, indent=2))
+    artifacts = sorted([*artifacts, "mv-recon-metrics.json", *view_names])
+    return {
+        "splats": l3_cloud.count,
+        "seed_splats": max(1, l3_cloud.count // 24),
+        "artifacts": artifacts,
+        "metrics": metrics,
+    }
 
 
 def _produce_video(
@@ -399,6 +637,18 @@ def produce(
             l6_json_path=l6_json_path,
         )
     if modality == "text" and prompt.strip():
+        # Opt-in multi-view path (text → MV-Adapter consistent views → 3DGS recon):
+        # real back/sides + intricate detail. Default OFF (single-image distillation
+        # stays the zero-risk default) until validated on the eval corpus.
+        if os.environ.get("ASTEL_T2MV") == "1":
+            return _produce_text_multiview(
+                task_id,
+                modality,
+                prompt,
+                out_dir,
+                longest_axis_m=longest_axis_m,
+                l6_json_path=l6_json_path,
+            )
         return _produce_text_generative(
             task_id,
             modality,

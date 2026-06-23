@@ -833,3 +833,72 @@ ruff·mypy·self-test. See [session-29 retro](../retros/session-29.md) +
 **M6 closes the build plan. Next = post-M6: Track N (launch/CI/deploy/monitoring),
 Track G (GPU-real: real 4DGS video, text→multiview, live LOD/scene wiring), Track
 T (fine-tuning, founder-gated on telemetry + cost).**
+
+## 2026-06-21 — The Photorealism Program (committed; supersedes the "G2 someday" framing)
+
+Founder directive: make the splats **photorealistic, highly detailed, and
+mesh-surpassing**. Full plan + sequencing in
+[`20-photorealism-program.md`](20-photorealism-program.md); state consolidation in
+[`19-master-state-and-photorealism.md`](19-master-state-and-photorealism.md). Binding
+flips decided this session (D20.1–D20.9), all **zero new spend on Box A**:
+
+- **D20.1 — conditioning becomes multi-view** (MV-Adapter on SDXL; re-verify SOTA):
+  N≥6 consistent ~1024px views replace the single image. The keystone — single-image
+  conditioning is the #1 photorealism blocker.
+- **D20.2 — L3 becomes a real un-frozen densified refine** (the built `densify.py`/
+  `refine.py` engine) supervised by those multi-view targets; default ON only once it
+  beats distillation on the eval corpus (it regresses on self-renders — measured).
+- **D20.3 — reimplement the PGSR multi-view loss set** + LPIPS + Mip-Splatting AA +
+  confidence-gated SDS (decided ✅ in RA8 §2, never built — the largest geometry lift).
+- **D20.4 — ship SH degree 3** (its own milestone: SplatCloud + ply/spz/sog/gltf +
+  Spark viewer + golden round-trip tests). The format is SH0-only today = the
+  structural root of the "painted-clay" look.
+- **D20.5 — hero budget 1M on Box A; cinematic 5M = cloud (⚠️ >$1k/mo, deferred).**
+- **D20.6 — real relightable L4** (deferred-PBR-on-gsplat, RA8 §6) replaces the CPU
+  estimate.
+- **D20.7 — keep TripoSplat L2; A/B the TRELLIS v1 gaussian head** (MIT,
+  nvdiffrast-clean) as a stronger single-image init, off the critical path.
+- **D20.8 — lead the public "beats mesh" claim with the CAPTURE path** (real photo →
+  relightable splat provably beats mesh now); drive text to parity behind it.
+- **D20.9 — enforce RA9 floors in CI** (needs the remote push, roadmap N1) so
+  mesh-surpassing claims are invariants, not point measurements.
+
+Order (strict where noted): **P1 multi-view targets → P2 real refine → P3 SH3 → P4
+detail → P5 relightable L4 → P6 capture lead + CI floors + cinematic.** No model
+training and no cloud spend are required to reach photorealism on Box A; Track T
+(fine-tuning) stays deferred.
+
+## 2026-06-21 (cont.) — P1 keystone DONE: MV-Adapter text→multiview→splat works
+
+The photorealism keystone (D20.1) is **implemented and validated on Box A**, and the
+single-image detail ceiling is broken. Decisions/outcomes:
+
+- **Multi-view generator = MV-Adapter** (`huanngzh/MV-Adapter`, **Apache-2.0** — code;
+  adapter weights `huanngzh/mv-adapter`, Apache). Adopted over the img2img
+  detail-transfer fallback (D20.1's runner-up, which couldn't add real 3D info).
+  text → **6 view-consistent ortho images** (az [0,45,90,180,270,315], elev 0, +Z up)
+  with photoreal engraving on **front AND back** — the thing single-image generation
+  cannot do. Runs on diffusers 0.38 / torch 2.11 / cu128 in ~20–50 s.
+- **Vendored** to `pipelines/gpu/external/MV-Adapter` (gitignored) with **2 tiny
+  Apache-permitted patches** making its `nvdiffrast` *texturing* import lazy
+  (`mesh_utils/__init__.py` + `mesh_utils/utils.py`) — t2mv never needs nvdiffrast
+  (NC, unbuildable native-Windows); same remediation pattern as the doc-12 o_voxel
+  taint. **Additive deps only** (einops/omegaconf/kornia/opencv/matplotlib/typeguard/
+  rembg) — **no torch/diffusers change**, so the gsplat/TripoSplat/SDXL stack is
+  untouched. License posture clean (no NC code/weights in the shipped path).
+- **Reconstruction = from-scratch 3DGS in gsplat's OWN convention** at the MV
+  viewpoints (`camera_model="ortho"` — 2DGS has no ortho; built via look-at so NO
+  TripoSplat frame-alignment needed): rembg matte → ortho cameras → sphere init fit
+  with photometric + alpha-silhouette + ADC. RESULT: a coherent, intricately
+  engraved helmet from **all angles** (real back), rivets + scrollwork at 2K zoom;
+  geom_qa ~0.69 at 1024 source, ~226k splats.
+- **Productionized:** typed modules `astel_gpu.text_to_multiview` +
+  `astel_gpu.mv_reconstruct` (ruff/mypy clean, +12 CPU tests; **181 GPU-pkg CPU
+  tests green**); `produce.py` gains an **env-gated** (`ASTEL_T2MV=1`, default OFF)
+  text→multiview branch packaging an honest `.astel` (origin `generated`, null
+  chamfer, multi-view-consistent provenance note). Default single-image path
+  unchanged (zero risk).
+
+**P1c COMPLETE.** Remaining: more views / higher source res for crisper *extreme*
+8K zoom; full SH3 cross-format propagation (densify/spz/sog/gltf/viewer) beyond the
+contained recon-pass; wire the API/eval-corpus A/B to flip `ASTEL_T2MV` on by default.

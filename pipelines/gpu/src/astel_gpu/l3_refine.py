@@ -107,6 +107,61 @@ def render_2dgs_train(
     return colors[..., :3].clamp(0.0, 1.0), normals, surf_normals, distort
 
 
+def render_2dgs_train_alpha(
+    params: GaussianParams, inputs: RenderInputs, *, distloss: bool = False
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Like :func:`render_2dgs_train` but ALSO returns the accumulated alpha.
+
+    Returns ``(colors, alphas, normals, surf_normals, distort)`` where ``alphas``
+    is ``(V, H, W, 1)`` in ``[0, 1]`` — the rasterizer's accumulated opacity. The
+    densified refine supervises this against the target foreground mask so the
+    object cannot fade to transparent on a black background (the opacity-collapse
+    that darkens an unfrozen optimisation; the frozen distillation cannot do it).
+    """
+    import gsplat
+
+    n_cams = int(inputs.viewmats.shape[0])
+    colors, alphas, normals, surf_normals, distort, _median, _meta = (
+        gsplat.rasterization_2dgs(
+            means=params.means,
+            quats=params.quats,
+            scales=params.scales,
+            opacities=params.opacities,
+            colors=_colors_per_cam(params, n_cams),
+            viewmats=inputs.viewmats,
+            Ks=inputs.ks,
+            width=inputs.w,
+            height=inputs.h,
+            packed=False,
+            render_mode="RGB+ED",
+            distloss=distloss,
+        )
+    )
+    return colors[..., :3].clamp(0.0, 1.0), alphas, normals, surf_normals, distort
+
+
+def foreground_mask_from_targets(
+    targets: torch.Tensor, threshold: float = 0.02
+) -> torch.Tensor:
+    """``(V, H, W, 1)`` object mask from black-background target renders.
+
+    A pixel is foreground where its brightest channel exceeds ``threshold``
+    (gsplat renders the object on black). Pure / CPU-testable — the silhouette the
+    refine's alpha is supervised to match.
+    """
+    return (targets.amax(dim=-1, keepdim=True) > threshold).to(targets.dtype)
+
+
+def alpha_mask_loss(alphas: torch.Tensor, target_mask: torch.Tensor) -> torch.Tensor:
+    """L1 between rendered alpha and the target foreground mask. Pure / CPU-testable.
+
+    Pins the rendered silhouette to the object: alpha→1 inside, →0 outside. This is
+    what stops the unfrozen densified refine from fading the object to transparent
+    (the dark-collapse failure on black-background targets).
+    """
+    return (alphas - target_mask).abs().mean()
+
+
 def surface_reg_loss(
     render_normals: torch.Tensor,
     surf_normals: torch.Tensor,

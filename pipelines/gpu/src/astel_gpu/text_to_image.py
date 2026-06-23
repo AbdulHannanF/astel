@@ -29,11 +29,23 @@ the image-modality generative path already reports.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import shutil
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .image_qa import ImageQAConfig, ImageScore, score_image_file
+
+#: Default number of candidate images generated per prompt; the critic
+#: (:mod:`astel_gpu.image_qa`) picks the best. ``1`` disables best-of-N (single
+#: draw, original behaviour). Override via ``ASTEL_T2I_BEST_OF``.
+DEFAULT_BEST_OF_N = 4
+_BEST_OF_ENV = "ASTEL_T2I_BEST_OF"
 
 #: Appended to every user prompt to push the model toward a single, centered,
 #: TripoSplat-friendly product shot: one object, full-frame, neutral
@@ -101,6 +113,49 @@ def _model_params(model_id: str, *, steps: int | None) -> dict[str, Any]:
     }
 
 
+def _run_one(
+    pipe: Any,
+    prompt: str,
+    params: dict[str, Any],
+    *,
+    seed: int,
+    size: int,
+    out_path: Path,
+    device: str,
+) -> dict[str, Any]:
+    """Run one diffusion sample on an already-loaded ``pipe`` and save the image."""
+    import torch
+
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    start = time.perf_counter()
+    result = pipe(
+        prompt,
+        guidance_scale=params["guidance_scale"],
+        num_inference_steps=params["num_inference_steps"],
+        height=size,
+        width=size,
+        generator=torch.Generator("cpu").manual_seed(seed),
+        **params["extra_call_kwargs"],
+    )
+    wall_time_s = time.perf_counter() - start
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    result.images[0].save(out_path)
+    peak_vram_gb = (
+        torch.cuda.max_memory_allocated() / (1024**3) if device == "cuda" else 0.0
+    )
+    return {
+        "model": active_model_id(),
+        "steps": params["num_inference_steps"],
+        "size": size,
+        "seed": seed,
+        "wall_time_s": wall_time_s,
+        "peak_vram_gb": peak_vram_gb,
+        "prompt_used": prompt,
+        "success": True,
+    }
+
+
 def generate_image(
     prompt: str,
     out_path: Path,
@@ -131,11 +186,7 @@ def generate_image(
     model_id = active_model_id()
     params = _model_params(model_id, steps=steps)
     dtype = getattr(torch, params["dtype"])
-    num_steps = params["num_inference_steps"]
-
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    if device == "cuda":
-        torch.cuda.reset_peak_memory_stats()
 
     pipe = AutoPipelineForText2Image.from_pretrained(  # type: ignore[no-untyped-call]
         model_id,
@@ -144,43 +195,169 @@ def generate_image(
         **params["extra_load_kwargs"],
     )
     pipe.enable_model_cpu_offload()
+    try:
+        return _run_one(
+            pipe, prompt, params, seed=seed, size=size, out_path=out_path,
+            device=device,
+        )
+    finally:
+        # Free VRAM before the downstream TripoSplat L2 stage loads its weights.
+        del pipe
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
 
-    start = time.perf_counter()
-    result = pipe(
-        prompt,
-        guidance_scale=params["guidance_scale"],
-        num_inference_steps=num_steps,
-        height=size,
-        width=size,
-        generator=torch.Generator("cpu").manual_seed(seed),
-        **params["extra_call_kwargs"],
+
+@dataclass(frozen=True)
+class ImageCandidate:
+    """One generated candidate image plus its generation metrics."""
+
+    seed: int
+    path: Path
+    metrics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BestOfNResult:
+    """Outcome of :func:`generate_image_best_of_n` — the chosen image + scorecards."""
+
+    chosen_seed: int
+    chosen_score: ImageScore
+    chosen_metrics: dict[str, Any]
+    candidates: list[dict[str, Any]]
+
+    def to_sidecar(self) -> dict[str, Any]:
+        """JSON-serialisable summary for a ``text2img-candidates.json`` sidecar."""
+        return {
+            "n": len(self.candidates),
+            "chosen_seed": self.chosen_seed,
+            "chosen_score": self.chosen_score.to_dict(),
+            "chosen_metrics": self.chosen_metrics,
+            "candidates": self.candidates,
+        }
+
+
+#: A candidate generator: ``(prompt, out_dir, seeds, steps, size, device) ->
+#: list[ImageCandidate]``. Injectable so CPU tests can fake the diffusion stage.
+CandidateGenerator = Callable[..., list[ImageCandidate]]
+
+
+def _generate_candidates_diffusers(
+    prompt: str,
+    out_dir: Path,
+    *,
+    seeds: list[int],
+    steps: int | None,
+    size: int,
+    device: str | None,
+) -> list[ImageCandidate]:
+    """Generate one candidate image per seed, loading the pipeline ONCE.
+
+    Best-of-N would otherwise reload ~7 GB of weights per draw; here a single
+    load services every seed, then VRAM is freed before TripoSplat runs.
+    """
+    import gc
+
+    import torch
+    from diffusers import AutoPipelineForText2Image
+
+    model_id = active_model_id()
+    params = _model_params(model_id, steps=steps)
+    dtype = getattr(torch, params["dtype"])
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pipe = AutoPipelineForText2Image.from_pretrained(  # type: ignore[no-untyped-call]
+        model_id,
+        torch_dtype=dtype,
+        use_safetensors=True,
+        **params["extra_load_kwargs"],
     )
-    wall_time_s = time.perf_counter() - start
+    pipe.enable_model_cpu_offload()
+    candidates: list[ImageCandidate] = []
+    try:
+        for i, seed in enumerate(seeds):
+            path = out_dir / f"cand_{i}_seed{seed}.png"
+            metrics = _run_one(
+                pipe, prompt, params, seed=seed, size=size, out_path=path,
+                device=device,
+            )
+            candidates.append(ImageCandidate(seed=seed, path=path, metrics=metrics))
+    finally:
+        del pipe
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+    return candidates
 
-    image = result.images[0]
+
+def active_best_of_n(default: int = DEFAULT_BEST_OF_N) -> int:
+    """Best-of-N count in effect (``ASTEL_T2I_BEST_OF`` env override or default)."""
+    raw = os.environ.get(_BEST_OF_ENV)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def generate_image_best_of_n(
+    prompt: str,
+    out_path: Path,
+    *,
+    base_seed: int,
+    n: int | None = None,
+    steps: int | None = None,
+    size: int = 1024,
+    device: str | None = None,
+    config: ImageQAConfig | None = None,
+    candidate_generator: CandidateGenerator | None = None,
+    score_fn: Callable[[Path], ImageScore] = score_image_file,
+) -> BestOfNResult:
+    """Generate ``n`` candidate images and keep the one the critic ranks highest.
+
+    This is the reliability fix for "same prompt, sometimes wrong": instead of
+    betting the whole asset on a single text-to-image draw, we draw ``n`` images
+    (seeds ``base_seed .. base_seed + n - 1``), score each with
+    :mod:`astel_gpu.image_qa`, copy the best to ``out_path``, and delete the rest.
+    The chosen image's score + every candidate's scorecard are returned so the
+    caller can persist them (Truth Meter input) and so a fully-rejected batch is
+    visible rather than silently shipped.
+
+    ``candidate_generator`` defaults to the real diffusers stage but is injectable
+    for CPU tests. ``n`` defaults to :func:`active_best_of_n` (env-configurable).
+    """
+    n = n if n is not None else active_best_of_n()
+    gen = candidate_generator or _generate_candidates_diffusers
+    seeds = [base_seed + i for i in range(max(1, n))]
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(out_path)
 
-    peak_vram_gb = (
-        torch.cuda.max_memory_allocated() / (1024**3) if device == "cuda" else 0.0
+    candidates = gen(
+        prompt, out_path.parent, seeds=seeds, steps=steps, size=size, device=device
     )
+    if not candidates:
+        raise RuntimeError("generate_image_best_of_n: generator produced no images")
 
-    # Free VRAM before the downstream TripoSplat L2 stage loads its weights.
-    del pipe
-    gc.collect()
-    if device == "cuda":
-        torch.cuda.empty_cache()
+    scored = [(c, score_fn(c.path)) for c in candidates]
+    best_candidate, best_score = max(scored, key=lambda cs: cs[1].overall)
 
-    return {
-        "model": model_id,
-        "steps": num_steps,
-        "size": size,
-        "seed": seed,
-        "wall_time_s": wall_time_s,
-        "peak_vram_gb": peak_vram_gb,
-        "prompt_used": prompt,
-        "success": True,
-    }
+    shutil.copyfile(best_candidate.path, out_path)
+    # The chosen image now lives at out_path; drop the candidate temp files.
+    for cand, _ in scored:
+        with contextlib.suppress(OSError):
+            cand.path.unlink()
+
+    candidate_dicts = [
+        {"seed": c.seed, "score": s.to_dict(), "metrics": c.metrics}
+        for c, s in scored
+    ]
+    return BestOfNResult(
+        chosen_seed=best_candidate.seed,
+        chosen_score=best_score,
+        chosen_metrics=best_candidate.metrics,
+        candidates=candidate_dicts,
+    )
 
 
 def main() -> None:
